@@ -14,46 +14,60 @@ datasource db {
 }
 
 model School {
-  id          Int        @id @default(autoincrement())
-  name        String
-  schoolCode  String     @unique @db.Char(4)
-  address     String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id         Int      @id @default(autoincrement())
+  name       String
+  schoolCode String   @unique @db.Char(4)
+  address    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  students    Student[]
-  staff       Staff[]
+  students   Student[]
+  staff      Staff[]
+  classrooms Classroom[]
+  subjects    Subject[]
 }
 
 model Student {
-  id         Int       @id @default(autoincrement())
-  name       String
-  email      String    @unique
-  grade      String?
+  id          Int       @id @default(autoincrement())
+  name        String
+  email       String    @unique
+  grade       String?
   dateOfBirth DateTime?
-  enrolledAt DateTime  @default(now())
+  enrolledAt  DateTime  @default(now())
 
-  school     School    @relation(fields: [schoolId], references: [id])
-  schoolId   Int
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
 
-  user       User?     @relation(fields: [userId], references: [id])
-  userId     Int?      @unique
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?  @unique
+
+  // a student belongs to a single classroom
+  classroom   Classroom? @relation(fields: [classroomId], references: [id])
+  classroomId Int?
+
+  // subjects the student is enrolled in (many-to-many)
+  subjects     Subject[]
+  
+  // attendance records for the student
+  attendances  Attendance[]
 }
 
 model Staff {
-  id         Int       @id @default(autoincrement())
-  name       String
-  email      String    @unique
-  role       String
-  hiredAt    DateTime  @default(now())
+  id      Int      @id @default(autoincrement())
+  name    String
+  email   String   @unique
+  role    String
+  hiredAt DateTime @default(now())
 
-  school     School    @relation(fields: [schoolId], references: [id])
-  schoolId   Int
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
 
-  user       User?     @relation(fields: [userId], references: [id])
-  userId     Int?      @unique
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?  @unique
+
+  // attendance records for staff
+  attendances Attendance[]
 }
-
 
 enum Role {
   STUDENT
@@ -61,16 +75,68 @@ enum Role {
   ADMIN
 }
 
-model User {
-  id                 Int       @id @default(autoincrement())
-  email              String    @unique
-  password           String    // hashed password (never store plain text)
-  role               Role      @default(STUDENT)
-  createdAt          DateTime  @default(now())
-  resetToken         String?   // for password reset
-  resetTokenExpiresAt DateTime?
-
-  student            Student?
-  staff              Staff?
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
 }
 
+model User {
+  id                  Int       @id @default(autoincrement())
+  email               String    @unique
+  password            String // hashed password (never store plain text)
+  role                Role      @default(STUDENT)
+  createdAt           DateTime  @default(now())
+  resetToken          String? // for password reset
+  resetTokenExpiresAt DateTime?
+
+  student Student?
+  staff   Staff?
+}
+
+model Attendance {
+  id         Int              @id @default(autoincrement())
+  date       DateTime
+  status     AttendanceStatus
+  note       String?
+  createdAt  DateTime         @default(now())
+
+  // Either studentId or staffId will be set
+  student    Student?         @relation(fields: [studentId], references: [id])
+  studentId  Int?
+
+  staff      Staff?           @relation(fields: [staffId], references: [id])
+  staffId    Int?
+
+  @@index([studentId])
+  @@index([staffId])
+  @@index([date])
+}
+
+model Subject {
+  id          Int      @id @default(autoincrement())
+  name        String
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  // students enrolled in this subject
+  students Student[]
+  
+  // optional relation to School
+  school     School?  @relation(fields: [schoolId], references: [id])
+  schoolId   Int?
+}
+
+model Classroom {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
+
+  // many-to-many with Student
+  students Student[]
+}

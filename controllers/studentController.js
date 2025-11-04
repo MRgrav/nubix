@@ -1,7 +1,7 @@
 import prisma from '../models/prisma.js';
 
 export const createStudent = async (req, res) => {
-  const { name, email, grade, dateOfBirth, schoolId } = req.body;
+  const { name, email, grade, dateOfBirth, schoolId, classroomId, subjectIds } = req.body;
   try {
     const existingStudent = await prisma.student.findUnique({
       where: { email }
@@ -13,14 +13,24 @@ export const createStudent = async (req, res) => {
       });
     }
 
+    const data = {
+      name,
+      email,
+      grade,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
+    };
+
+    if (classroomId !== undefined && classroomId !== null) {
+      data.classroom = { connect: { id: parseInt(classroomId) } };
+    }
+
+    if (Array.isArray(subjectIds) && subjectIds.length) {
+      data.subjects = { connect: subjectIds.map((s) => ({ id: parseInt(s) })) };
+    }
+
     const student = await prisma.student.create({
-      data: {
-        name,
-        email,
-        grade,
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-        school: { connect: { id: parseInt(schoolId) } }
-      },
+      data,
       include: {
         school: {
           select: {
@@ -28,6 +38,12 @@ export const createStudent = async (req, res) => {
             name: true,
             schoolCode: true
           }
+        },
+        classroom: {
+          select: { id: true, name: true }
+        },
+        subjects: {
+          select: { id: true, name: true, code: true }
         }
       }
     });
@@ -72,25 +88,28 @@ export const getStudents = async (req, res) => {
       prisma.student.findMany({
         where,
         include: {
-          school: {
-            select: {
-              id: true,
-              name: true,
-              schoolCode: true
+            school: {
+              select: {
+                id: true,
+                name: true,
+                schoolCode: true
+              }
+            },
+            classroom: {
+              select: { id: true, name: true }
+            },
+            user: isAdmin ? {
+              select: {
+                email: true,
+                role: true,
+              }
+            } : {
+              select: {
+                email: true,
+                role: true
+              }
             }
           },
-          user: isAdmin ? {
-            select: {
-              email: true,
-              role: true,
-            }
-          } : {
-            select: {
-              email: true,
-              role: true
-            }
-          }
-        },
         orderBy: { name: 'asc' },
         skip,
         take: parseInt(limit)
@@ -125,6 +144,9 @@ export const getStudent = async (req, res) => {
             schoolCode: true
           }
         },
+        classroom: {
+          select: { id: true, name: true }
+        },
         user: {
           select: {
             email: true,
@@ -147,17 +169,31 @@ export const getStudent = async (req, res) => {
 
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
-  const { name, email, grade, dateOfBirth, schoolId } = req.body;
+  const { name, email, grade, dateOfBirth, schoolId, classroomId, subjectIds } = req.body;
   try {
+    const data = {
+      name,
+      email,
+      grade,
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
+    };
+
+    // classroom replace semantics: connect / disconnect
+    if (classroomId === null) {
+      data.classroom = { disconnect: true };
+    } else if (classroomId !== undefined) {
+      data.classroom = { connect: { id: parseInt(classroomId) } };
+    }
+
+    // If subjectIds provided, replace the student's subjects
+    if (Array.isArray(subjectIds)) {
+      data.subjects = { set: subjectIds.map((s) => ({ id: parseInt(s) })) };
+    }
+
     const student = await prisma.student.update({
       where: { id: parseInt(id) },
-      data: {
-        name,
-        email,
-        grade,
-        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-        school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
-      },
+      data,
       include: {
         school: {
           select: {
@@ -165,6 +201,12 @@ export const updateStudent = async (req, res) => {
             name: true,
             schoolCode: true
           }
+        },
+        classroom: {
+          select: { id: true, name: true }
+        },
+        subjects: {
+          select: { id: true, name: true, code: true }
         }
       }
     });
@@ -186,7 +228,7 @@ export const updateStudentProfile = async (req, res) => {
   const { id } = req.params;
   const { name, dateOfBirth } = req.body;
   const userId = req.user.id;
-
+  console.log(req.params);
   try {
     // First, verify that the student exists and belongs to the logged-in user
     const student = await prisma.student.findFirst({
@@ -212,7 +254,7 @@ export const updateStudentProfile = async (req, res) => {
         }
       }
     });
-
+    console.log(student);
     if (!student) {
       return res.status(403).json({ 
         error: 'Access denied. You can only update your own profile.' 
