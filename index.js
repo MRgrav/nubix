@@ -5,6 +5,7 @@ import studentRoutes from './routes/studentRoutes.js';
 import subjectRoutes from './routes/subjectRoutes.js';
 import classRoutes from './routes/classRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+import examinationRoutes from './routes/examinationRoutes.js';
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,7 @@ app.use('/api/students', studentRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/classes', classRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/examinations', examinationRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

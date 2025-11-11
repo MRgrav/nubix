@@ -25,6 +25,7 @@ model School {
   staff      Staff[]
   classrooms Classroom[]
   subjects    Subject[]
+  examinations Examination[]
 }
 
 model Student {
@@ -50,6 +51,9 @@ model Student {
   
   // attendance records for the student
   attendances  Attendance[]
+
+  // examination results for the student
+  examinationResults ExaminationResult[]
 }
 
 model Staff {
@@ -139,4 +143,56 @@ model Classroom {
 
   // many-to-many with Student
   students Student[]
+
+  // examinations for this classroom
+  examinations Examination[]
+}
+
+enum ExaminationStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Examination {
+  id          Int                @id @default(autoincrement())
+  title       String
+  description String?
+  subject     String
+  examDate    DateTime
+  duration    Int                // duration in minutes
+  totalMarks  Float
+  status      ExaminationStatus  @default(SCHEDULED)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  school      School             @relation(fields: [schoolId], references: [id])
+  schoolId    Int
+
+  classroom   Classroom          @relation(fields: [classroomId], references: [id])
+  classroomId Int
+
+  results     ExaminationResult[]
+
+  @@index([schoolId])
+  @@index([classroomId])
+  @@index([examDate])
+}
+
+model ExaminationResult {
+  id            Int          @id @default(autoincrement())
+  marksObtained Float
+  remarks       String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  examination   Examination  @relation(fields: [examinationId], references: [id], onDelete: Cascade)
+  examinationId Int
+
+  student       Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId     Int
+
+  @@unique([examinationId, studentId])
+  @@index([studentId])
 }
