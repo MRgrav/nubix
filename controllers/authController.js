@@ -124,25 +124,39 @@ export const createUser = async (req, res) => {
 // Requires `BOOTSTRAP_ADMIN_SECRET` env var to match `bootstrapSecret` sent in the request body.
 export const setupAdmin = async (req, res) => {
   try {
-    const {  email, name, password, schoolCode, schoolName } = req.body;
-
-   
+    const { email, name, password, schoolCode, schoolName } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'email and password are required' });
     }
 
-    // If schoolCode is provided, find or create the School and link the user to it
+    // ⛔ Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+
+    // SCHOOL HANDLING
     let schoolId = null;
     if (schoolCode) {
-      // normalize schoolCode to string and trim
       const code = String(schoolCode).trim();
-      let school = await prisma.school.findUnique({ where: { schoolCode: code } });
+
+      let school = await prisma.school.findUnique({
+        where: { schoolCode: code }
+      });
+
       if (!school) {
-        // create new school; require a name or fallback to a default
-        const nameToUse = schoolName || `School ${code}`;
-        school = await prisma.school.create({ data: { name: nameToUse, schoolCode: code } });
+        school = await prisma.school.create({
+          data: { 
+            name: schoolName || `School ${code}`,
+            schoolCode: code
+          }
+        });
       }
+
       schoolId = school.id;
     }
 
@@ -151,20 +165,25 @@ export const setupAdmin = async (req, res) => {
     const userData = {
       email,
       password: hashedPassword,
-      role: 'ADMIN'
+      role: "ADMIN",
+      ...(schoolId && { schoolId })
     };
-    if (schoolId) userData.schoolId = schoolId;
 
-    const user = await prisma.user.create({
-      data: userData
+    const user = await prisma.user.create({ data: userData });
+
+    res.status(201).json({
+      message: "Admin user created",
+      userId: user.id,
+      email,
+      schoolId
     });
 
-    res.status(201).json({ message: 'Admin user created', userId: user.id, email, schoolId });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create admin user' });
+    res.status(500).json({ error: "Failed to create admin user" });
   }
 };
+
 
 export const login = async (req, res) => {
   const { email, password } = req.body;
