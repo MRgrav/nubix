@@ -21,6 +21,8 @@ model School {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  // users associated with this school (admins or system users)
+  users      User[]
   students   Student[]
   staff      Staff[]
   classrooms Classroom[]
@@ -97,6 +99,10 @@ model User {
 
   student Student?
   staff   Staff?
+  
+  // optional relation to a School (useful for ADMIN or general user association)
+  school   School? @relation(fields: [schoolId], references: [id])
+  schoolId Int?
 }
 
 model Attendance {
