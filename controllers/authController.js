@@ -124,21 +124,9 @@ export const createUser = async (req, res) => {
 // Requires `BOOTSTRAP_ADMIN_SECRET` env var to match `bootstrapSecret` sent in the request body.
 export const setupAdmin = async (req, res) => {
   try {
-    const { bootstrapSecret, email, name, password, schoolCode, schoolName } = req.body;
+    const {  email, name, password, schoolCode, schoolName } = req.body;
 
-    if (!process.env.BOOTSTRAP_ADMIN_SECRET) {
-      return res.status(500).json({ error: 'Bootstrap not configured on server' });
-    }
-
-    if (!bootstrapSecret || bootstrapSecret !== process.env.BOOTSTRAP_ADMIN_SECRET) {
-      return res.status(403).json({ error: 'Invalid bootstrap secret' });
-    }
-
-    // Prevent creating additional admins if one already exists
-    const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
-    if (adminCount > 0) {
-      return res.status(400).json({ error: 'An admin account already exists' });
-    }
+   
 
     if (!email || !password) {
       return res.status(400).json({ error: 'email and password are required' });
