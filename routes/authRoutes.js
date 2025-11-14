@@ -5,7 +5,8 @@ import {
   refreshToken, 
   changePassword,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  setupAdmin
 } from '../controllers/authController.js';
 import { loginValidation } from '../middlewares/validationMiddleware.js';
 import { authenticate, authorize } from '../middlewares/authMiddleware.js';
@@ -20,6 +21,9 @@ router.post('/reset-password/:token', resetPassword);
 
 // Protected routes
 router.post('/change-password', authenticate, changePassword);
+
+// One-time bootstrap route to create initial ADMIN. Requires BOOTSTRAP_ADMIN_SECRET env var.
+router.post('/setup-admin', setupAdmin);
 
 // Admin only routes
 router.post('/users', authenticate, authorize('ADMIN'), createUser);

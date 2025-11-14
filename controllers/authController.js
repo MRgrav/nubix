@@ -120,6 +120,47 @@ export const createUser = async (req, res) => {
   }
 };
 
+// One-time bootstrap endpoint to create the initial ADMIN user.
+// Requires `BOOTSTRAP_ADMIN_SECRET` env var to match `bootstrapSecret` sent in the request body.
+export const setupAdmin = async (req, res) => {
+  try {
+    const { bootstrapSecret, email, name, password } = req.body;
+
+    if (!process.env.BOOTSTRAP_ADMIN_SECRET) {
+      return res.status(500).json({ error: 'Bootstrap not configured on server' });
+    }
+
+    if (!bootstrapSecret || bootstrapSecret !== process.env.BOOTSTRAP_ADMIN_SECRET) {
+      return res.status(403).json({ error: 'Invalid bootstrap secret' });
+    }
+
+    // Prevent creating additional admins if one already exists
+    const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+    if (adminCount > 0) {
+      return res.status(400).json({ error: 'An admin account already exists' });
+    }
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'email and password are required' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        role: 'ADMIN'
+      }
+    });
+
+    res.status(201).json({ message: 'Admin user created', userId: user.id, email });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create admin user' });
+  }
+};
+
 export const login = async (req, res) => {
   const { email, password } = req.body;
   try {
