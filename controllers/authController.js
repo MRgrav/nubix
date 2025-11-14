@@ -180,7 +180,7 @@ export const setupAdmin = async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to create admin user" });
+    res.status(500).json({ error: err.message || 'Failed to set up admin user' });
   }
 };
 
