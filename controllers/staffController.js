@@ -1,10 +1,94 @@
 import prisma from '../models/prisma.js';
 
+const OPTIONAL_STRING_FIELDS = [
+  'employeeId',
+  'title',
+  'name',
+  'gender',
+  'employeeType',
+  'role',
+  'designation',
+  'fatherHusbandName',
+  'qualification',
+  'address',
+  'city',
+  'state',
+  'pincode',
+  'location',
+  'aadharNumber',
+  'panNumber',
+  'mobile',
+  'alternateMobile',
+  'email',
+  'alternateEmail',
+  'brokerBranch',
+  'bankName',
+  'bankBranchName',
+  'bankAccountNumber',
+  'ifscCode',
+  'jobOfferLetterUrl',
+  'joiningLetterUrl',
+  'ndaUrl',
+  'experienceLetterUrl',
+  'relievingLetterUrl',
+  'salarySlipUrl',
+  'aadhaarCardUrl',
+  'panCardUrl',
+  'cancelledChequeUrl',
+  'passportUrl',
+  'sscCertificateUrl',
+  'hscCertificateUrl',
+  'graduationCertificateUrl'
+];
+
+const sanitizeString = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const parseDateField = (value, field) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`Invalid ${field}`);
+    error.code = 'INVALID_DATE';
+    error.meta = { field };
+    throw error;
+  }
+  return parsed;
+};
+
+const buildStaffPayload = (body) => {
+  const data = {};
+
+  OPTIONAL_STRING_FIELDS.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      data[field] = sanitizeString(body[field]);
+    }
+  });
+
+  const dateOfBirth = parseDateField(body.dateOfBirth, 'dateOfBirth');
+  if (dateOfBirth !== undefined) {
+    data.dateOfBirth = dateOfBirth;
+  }
+
+  const dateOfJoining = parseDateField(body.dateOfJoining, 'dateOfJoining');
+  if (dateOfJoining !== undefined) {
+    data.dateOfJoining = dateOfJoining;
+  }
+
+  return data;
+};
+
 export const createStaff = async (req, res) => {
-  const { name, email, role, schoolId } = req.body;
+  const { schoolId } = req.body;
   try {
     const existingStaff = await prisma.staff.findUnique({
-      where: { email }
+      where: { email: req.body.email }
     });
 
     if (existingStaff) {
@@ -13,13 +97,11 @@ export const createStaff = async (req, res) => {
       });
     }
 
+    const staffData = buildStaffPayload(req.body);
+    staffData.school = { connect: { id: parseInt(schoolId, 10) } };
+
     const staff = await prisma.staff.create({
-      data: {
-        name,
-        email,
-        role,
-        school: { connect: { id: parseInt(schoolId) } }
-      },
+      data: staffData,
       include: {
         school: {
           select: {
@@ -35,7 +117,10 @@ export const createStaff = async (req, res) => {
   } catch (err) {
     console.error(err);
     if (err.code === 'P2002') {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Email or employee ID already exists' });
+    }
+    if (err.code === 'INVALID_DATE') {
+      return res.status(400).json({ error: err.message, field: err.meta?.field });
     }
     res.status(500).json({ error: 'Failed to create staff member' });
   }
@@ -132,16 +217,16 @@ export const getStaffMember = async (req, res) => {
 
 export const updateStaffMember = async (req, res) => {
   const { id } = req.params;
-  const { name, email, role, schoolId } = req.body;
   try {
+    const staffData = buildStaffPayload(req.body);
+
+    if (req.body.schoolId) {
+      staffData.school = { connect: { id: parseInt(req.body.schoolId, 10) } };
+    }
+
     const staff = await prisma.staff.update({
-      where: { id: parseInt(id) },
-      data: {
-        name,
-        email,
-        role,
-        school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
-      },
+      where: { id: parseInt(id, 10) },
+      data: staffData,
       include: {
         school: {
           select: {
@@ -160,7 +245,10 @@ export const updateStaffMember = async (req, res) => {
       return res.status(404).json({ error: 'Staff member not found' });
     }
     if (err.code === 'P2002') {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Email or employee ID already exists' });
+    }
+    if (err.code === 'INVALID_DATE') {
+      return res.status(400).json({ error: err.message, field: err.meta?.field });
     }
     res.status(500).json({ error: 'Failed to update staff member' });
   }

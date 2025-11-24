@@ -59,11 +59,60 @@ model Student {
 }
 
 model Staff {
-  id      Int      @id @default(autoincrement())
-  name    String
-  email   String   @unique
-  role    String
-  hiredAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  hiredAt    DateTime @default(now())
+
+  // --- Basic details tab ---
+  employeeId        String? @unique
+  title             String?
+  name              String
+  gender            String?
+  employeeType      String?
+  role              String
+  designation       String?
+  dateOfBirth       DateTime?
+  dateOfJoining     DateTime?
+  fatherHusbandName String?
+  qualification     String?
+
+  // --- Address / location block ---
+  address  String?
+  city     String?
+  state    String?
+  pincode  String?
+  location String?
+
+  // --- Identity details ---
+  aadharNumber String?
+  panNumber    String?
+
+  // --- Contact block ---
+  mobile          String?
+  alternateMobile String?
+  email           String  @unique
+  alternateEmail  String?
+  brokerBranch    String?
+
+  // --- Bank details tab ---
+  bankName          String?
+  bankBranchName    String?
+  bankAccountNumber String?
+  ifscCode          String?
+
+  // --- Document uploads tab ---
+  jobOfferLetterUrl        String?
+  joiningLetterUrl         String?
+  ndaUrl                   String?
+  experienceLetterUrl      String?
+  relievingLetterUrl       String?
+  salarySlipUrl            String?
+  aadhaarCardUrl           String?
+  panCardUrl               String?
+  cancelledChequeUrl       String?
+  passportUrl              String?
+  sscCertificateUrl        String?
+  hscCertificateUrl        String?
+  graduationCertificateUrl String?
 
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
