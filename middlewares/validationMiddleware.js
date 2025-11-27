@@ -63,3 +63,15 @@ export const staffValidation = [
   body('schoolId').isInt().withMessage('Valid school ID is required'),
   validateRequest
 ];
+
+export const assignmentValidation = [
+  body('title').notEmpty().withMessage('Assignment title is required'),
+  body('className').notEmpty().withMessage('Class name is required'),
+  body('fromDate').isISO8601().withMessage('Valid from date is required'),
+  body('toDate').isISO8601().withMessage('Valid to date is required'),
+  body('fileUrl').isURL().withMessage('Valid file URL is required'),
+  body('schoolId').isInt().withMessage('Valid school ID is required'),
+  body('classroomId').isInt().withMessage('Valid classroom ID is required'),
+  body('description').optional(),
+  validateRequest
+];

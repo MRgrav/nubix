@@ -28,6 +28,7 @@ model School {
   classrooms Classroom[]
   subjects    Subject[]
   examinations Examination[]
+  assignments Assignment[]
 }
 
 model Student {
@@ -122,6 +123,9 @@ model Staff {
 
   // attendance records for staff
   attendances Attendance[]
+
+  // assignments created by staff
+  assignments Assignment[]
 }
 
 enum Role {
@@ -201,6 +205,9 @@ model Classroom {
 
   // examinations for this classroom
   examinations Examination[]
+
+  // assignments for this classroom
+  assignments Assignment[]
 }
 
 enum ExaminationStatus {
@@ -250,4 +257,31 @@ model ExaminationResult {
 
   @@unique([examinationId, studentId])
   @@index([studentId])
+}
+
+model Assignment {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  className   String   // e.g. "LKG", "UKG", "Class 1"
+  fromDate    DateTime
+  toDate      DateTime
+  fileUrl     String   // link to image or PDF
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school      School    @relation(fields: [schoolId], references: [id])
+  schoolId    Int
+
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  classroomId Int
+
+  createdBy   Staff?    @relation(fields: [createdById], references: [id])
+  createdById Int?
+
+  @@index([schoolId])
+  @@index([classroomId])
+  @@index([createdById])
+  @@index([fromDate])
+  @@index([toDate])
 }
