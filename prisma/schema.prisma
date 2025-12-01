@@ -188,9 +188,8 @@ model Subject {
   createdAt   DateTime @default(now())
 
   // teacher responsible for this subject
-  teacherId   Int?
-  teacher     Staff?   @relation(fields: [teacherId], references: [id])
-  teacherName String?
+
+  teachers     Staff[]  
 
   // students enrolled in this subject
   students Student[]
@@ -199,7 +198,6 @@ model Subject {
   school     School?  @relation(fields: [schoolId], references: [id])
   schoolId   Int?
 
-  @@index([teacherId])
 }
 
 model Classroom {

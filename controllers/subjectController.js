@@ -4,35 +4,55 @@ import prisma from '../models/prisma.js';
 export const createSubject = async (req, res) => {
   try {
     const { name, code, description, schoolId, teacherId, teacherName } = req.body;
+
+    // Check if subject code already exists
     const existing = await prisma.subject.findUnique({ where: { code } });
-    if (existing) return res.status(400).json({ error: 'Subject code already exists' });
+    if (existing) {
+      return res.status(400).json({ error: 'Subject code already exists' });
+    }
 
     const data = { name, code, description };
 
-    if (teacherName !== undefined) {
-      data.teacherName = teacherName;
-    }
+    // Optional single teacher name field
+    if (teacherName) data.teacherName = teacherName;
 
+    // Connect multiple teachers if provided
     if (teacherId) {
-      data.teacher = { connect: { id: parseInt(teacherId, 10) } };
+      if (Array.isArray(teacherId)) {
+        data.teachers = {
+          connect: teacherId.map(id => ({ id: parseInt(id, 10) }))
+        };
+      } else {
+        data.teachers = { connect: { id: parseInt(teacherId, 10) } };
+      }
     }
 
-    if (schoolId) data.school = { connect: { id: parseInt(schoolId) } };
+    // Connect school if schoolId exists in DB
+    if (schoolId) {
+      const numericSchoolId = parseInt(schoolId, 10);
+      const schoolExists = await prisma.school.findUnique({ where: { id: numericSchoolId } });
+      if (schoolExists) {
+        data.school = { connect: { id: numericSchoolId } };
+      }
+    }
 
+    // Create the subject
     const subject = await prisma.subject.create({
       data,
       include: {
         school: { select: { id: true, name: true, schoolCode: true } },
-        teacher: { select: { id: true, name: true, email: true } }
+        teachers: { select: { id: true, name: true, email: true } }
       }
     });
 
     res.status(201).json(subject);
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create subject' });
   }
 };
+
 
 export const getSubjects = async (req, res) => {
   try {
@@ -40,7 +60,7 @@ export const getSubjects = async (req, res) => {
       orderBy: { name: 'asc' },
       include: {
         school: { select: { id: true, name: true, schoolCode: true } },
-        teacher: { select: { id: true, name: true, email: true } }
+        teachers: { select: { id: true, name: true, email: true } }
       }
     });
     res.json({ subjects });
