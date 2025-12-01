@@ -124,6 +124,9 @@ model Staff {
   // attendance records for staff
   attendances Attendance[]
 
+  // subjects taught by staff
+  subjects    Subject[]
+
   // assignments created by staff
   assignments Assignment[]
 }
@@ -184,12 +187,19 @@ model Subject {
   description String?
   createdAt   DateTime @default(now())
 
+  // teacher responsible for this subject
+  teacherId   Int?
+  teacher     Staff?   @relation(fields: [teacherId], references: [id])
+  teacherName String?
+
   // students enrolled in this subject
   students Student[]
   
   // optional relation to School
   school     School?  @relation(fields: [schoolId], references: [id])
   schoolId   Int?
+
+  @@index([teacherId])
 }
 
 model Classroom {

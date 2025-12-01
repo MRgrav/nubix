@@ -1,18 +1,30 @@
 import prisma from '../models/prisma.js';
 
-// Basic CRUD for Subject (now optionally linked to a School)
+// Basic CRUD for Subject (now optionally linked to a School and Teacher)
 export const createSubject = async (req, res) => {
   try {
-    const { name, code, description, schoolId } = req.body;
+    const { name, code, description, schoolId, teacherId, teacherName } = req.body;
     const existing = await prisma.subject.findUnique({ where: { code } });
     if (existing) return res.status(400).json({ error: 'Subject code already exists' });
 
     const data = { name, code, description };
+
+    if (teacherName !== undefined) {
+      data.teacherName = teacherName;
+    }
+
+    if (teacherId) {
+      data.teacher = { connect: { id: parseInt(teacherId, 10) } };
+    }
+
     if (schoolId) data.school = { connect: { id: parseInt(schoolId) } };
 
     const subject = await prisma.subject.create({
       data,
-      include: { school: { select: { id: true, name: true, schoolCode: true } } }
+      include: {
+        school: { select: { id: true, name: true, schoolCode: true } },
+        teacher: { select: { id: true, name: true, email: true } }
+      }
     });
 
     res.status(201).json(subject);
@@ -26,7 +38,10 @@ export const getSubjects = async (req, res) => {
   try {
     const subjects = await prisma.subject.findMany({
       orderBy: { name: 'asc' },
-      include: { school: { select: { id: true, name: true, schoolCode: true } } }
+      include: {
+        school: { select: { id: true, name: true, schoolCode: true } },
+        teacher: { select: { id: true, name: true, email: true } }
+      }
     });
     res.json({ subjects });
   } catch (err) {
@@ -40,7 +55,10 @@ export const getSubject = async (req, res) => {
     const { id } = req.params;
     const subject = await prisma.subject.findUnique({
       where: { id: parseInt(id) },
-      include: { school: { select: { id: true, name: true, schoolCode: true } } }
+      include: {
+        school: { select: { id: true, name: true, schoolCode: true } },
+        teacher: { select: { id: true, name: true, email: true } }
+      }
     });
     if (!subject) return res.status(404).json({ error: 'Subject not found' });
     res.json(subject);
@@ -53,8 +71,20 @@ export const getSubject = async (req, res) => {
 export const updateSubject = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, code, description, schoolId } = req.body;
+    const { name, code, description, schoolId, teacherId, teacherName } = req.body;
     const data = { name, code, description };
+
+    if (teacherName !== undefined) {
+      data.teacherName = teacherName;
+    }
+
+    if (teacherId === null) {
+      data.teacher = { disconnect: true };
+      data.teacherId = null;
+    } else if (teacherId !== undefined) {
+      data.teacher = { connect: { id: parseInt(teacherId, 10) } };
+    }
+
     if (schoolId === null) {
       data.school = { disconnect: true };
     } else if (schoolId !== undefined) {
