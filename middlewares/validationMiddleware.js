@@ -40,7 +40,28 @@ export const studentValidation = [
   body('email').isEmail().withMessage('Must be a valid email'),
   body('grade').optional(),
   body('dateOfBirth').optional().isISO8601().withMessage('Invalid date format'),
-  body('schoolId').isInt().withMessage('Valid school ID is required'),
+  body('gender').optional(),
+  body('previousSchoolName').optional(),
+  body('previousClass').optional(),
+  body('previousGrade').optional(),
+  body('promotedToClass').optional(),
+  body('totalAdmissionAmount').optional().isFloat().withMessage('Total admission amount must be a number'),
+  body('monthlyFees').optional().isFloat().withMessage('Monthly fees must be a number'),
+  body('admissionDate').optional().isISO8601().withMessage('Invalid admission date format'),
+  body('admissionReceiptNo').optional(),
+  body('admissionReceiptLink')
+    .optional()
+    .customSanitizer(v => typeof v === 'string' ? v.replace(/`/g, '').trim() : v)
+    .isURL().withMessage('Admission receipt link must be a valid URL'),
+  body('schoolId').optional().isInt().withMessage('schoolId must be an integer'),
+  body('schoolCode').optional().isLength({ min: 4, max: 4 }).withMessage('schoolCode must be 4 characters'),
+  body()
+    .custom((_, { req }) => {
+      if (!req.body.schoolId && !req.body.schoolCode) {
+        throw new Error('Either schoolId or schoolCode is required');
+      }
+      return true;
+    }),
   validateRequest
 ];
 

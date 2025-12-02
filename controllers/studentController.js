@@ -1,11 +1,47 @@
 import prisma from '../models/prisma.js';
+import bcrypt from 'bcryptjs';
+
+const generateSecurePassword = () => {
+  const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lowercase = 'abcdefghijkmnpqrstuvwxyz';
+  const numbers = '23456789';
+  const special = '@#$%&';
+  let password = '';
+  password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+  password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+  password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+  password += special.charAt(Math.floor(Math.random() * special.length));
+  const allChars = uppercase + lowercase + numbers;
+  for (let i = 0; i < 4; i++) {
+    password += allChars.charAt(Math.floor(Math.random() * allChars.length));
+  }
+  return password.split('').sort(() => 0.5 - Math.random()).join('');
+};
 
 export const createStudent = async (req, res) => {
-  const { name, email, grade, dateOfBirth, schoolId, classroomId, subjectIds } = req.body;
+  const { 
+    name, 
+    email, 
+    grade, 
+    dateOfBirth, 
+    gender,
+    previousSchoolName,
+    previousClass,
+    previousGrade,
+    promotedToClass,
+    totalAdmissionAmount,
+    monthlyFees,
+    admissionDate,
+    admissionReceiptNo,
+    admissionReceiptLink,
+    schoolId,
+    schoolCode,
+    classroomId, 
+    subjectIds 
+  } = req.body;
   try {
-    const existingStudent = await prisma.student.findUnique({
-      where: { email }
-    });
+    const existingStudent = await prisma.student.findUnique({ where: { email } });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
 
     if (existingStudent) {
       return res.status(400).json({
@@ -13,44 +49,118 @@ export const createStudent = async (req, res) => {
       });
     }
 
-    const data = {
-      name,
-      email,
-      grade,
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-      school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
-    };
-
-    if (classroomId !== undefined && classroomId !== null) {
-      data.classroom = { connect: { id: parseInt(classroomId) } };
-    }
-
-    if (Array.isArray(subjectIds) && subjectIds.length) {
-      data.subjects = { connect: subjectIds.map((s) => ({ id: parseInt(s) })) };
-    }
-
-    const student = await prisma.student.create({
-      data,
-      include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-            schoolCode: true
+    const result = await prisma.$transaction(async (tx) => {
+      let resolvedSchoolId;
+      if (schoolCode) {
+        const school = await tx.school.findUnique({ where: { schoolCode } });
+        if (!school) {
+          const err = new Error('School not found');
+          err.code = 'SCHOOL_NOT_FOUND';
+          throw err;
+        }
+        resolvedSchoolId = school.id;
+      } else if (schoolId) {
+        const s = String(schoolId);
+        if (s.length === 4 && s.startsWith('0')) {
+          const school = await tx.school.findUnique({ where: { schoolCode: s } });
+          if (!school) {
+            const err = new Error('School not found');
+            err.code = 'SCHOOL_NOT_FOUND';
+            throw err;
           }
-        },
-        classroom: {
-          select: { id: true, name: true }
-        },
-        subjects: {
-          select: { id: true, name: true, code: true }
+          resolvedSchoolId = school.id;
+        } else {
+          resolvedSchoolId = parseInt(schoolId);
         }
       }
+
+      let userId;
+      if (!existingUser) {
+        const tempPassword = generateSecurePassword();
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
+        const user = await tx.user.create({
+          data: {
+            email,
+            password: hashedPassword,
+            role: 'STUDENT',
+            schoolId: resolvedSchoolId
+          }
+        });
+        userId = user.id;
+        req.generatedPassword = tempPassword;
+      } else {
+        userId = existingUser.id;
+      }
+
+      const data = {
+        name,
+        email,
+        grade,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+        gender,
+        previousSchoolName,
+        previousClass,
+        previousGrade,
+        promotedToClass,
+        totalAdmissionAmount: totalAdmissionAmount !== undefined && totalAdmissionAmount !== null ? parseFloat(totalAdmissionAmount) : undefined,
+        monthlyFees: monthlyFees !== undefined && monthlyFees !== null ? parseFloat(monthlyFees) : undefined,
+        admissionDate: admissionDate ? new Date(admissionDate) : null,
+        admissionReceiptNo,
+        admissionReceiptLink,
+        school: resolvedSchoolId ? { connect: { id: resolvedSchoolId } } : undefined,
+        user: userId ? { connect: { id: userId } } : undefined
+      };
+
+      if (classroomId !== undefined && classroomId !== null) {
+        const classroom = await tx.classroom.findUnique({ where: { id: parseInt(classroomId) } });
+        if (classroom) {
+          data.classroom = { connect: { id: classroom.id } };
+        }
+      }
+
+      if (Array.isArray(subjectIds) && subjectIds.length) {
+        const subjectIdInts = subjectIds.map((s) => parseInt(s));
+        const existingSubjects = await tx.subject.findMany({
+          where: { id: { in: subjectIdInts } },
+          select: { id: true }
+        });
+        if (existingSubjects.length) {
+          data.subjects = { connect: existingSubjects.map((s) => ({ id: s.id })) };
+        }
+      }
+
+      const created = await tx.student.create({
+        data,
+        include: {
+          school: { select: { id: true, name: true, schoolCode: true } },
+          classroom: { select: { id: true, name: true } },
+          subjects: { select: { id: true, name: true, code: true } }
+        }
+      });
+
+      const rollNo = `ROLL${1000 + created.id}`;
+      const student = await tx.student.update({
+        where: { id: created.id },
+        data: { rollNo },
+        include: {
+          school: { select: { id: true, name: true, schoolCode: true } },
+          classroom: { select: { id: true, name: true } },
+          subjects: { select: { id: true, name: true, code: true } }
+        }
+      });
+
+      return student;
     });
 
-    res.status(201).json(student);
+    res.status(201).json({
+      ...result,
+      temporaryPassword: req.generatedPassword || undefined
+    });
   } catch (err) {
     console.error(err);
+    if (err.code === 'SCHOOL_NOT_FOUND') {
+      return res.status(404).json({ error: 'School not found' });
+    }
     if (err.code === 'P2002') {
       return res.status(400).json({ error: 'Email already exists' });
     }
@@ -59,8 +169,7 @@ export const createStudent = async (req, res) => {
 };
 
 export const getStudents = async (req, res) => {
-  const { page = 1, limit = 10, search, schoolId, grade } = req.query;
-  console.log(req.user);
+  const { page = 1, limit = 10, search, schoolId, schoolCode, schoolcode, grade } = req.query;
   const isAdmin = req.user?.role === 'ADMIN';
   
   try {
@@ -75,8 +184,16 @@ export const getStudents = async (req, res) => {
       ];
     }
 
-    if (schoolId) {
-      where.schoolId = parseInt(schoolId);
+    const sc = schoolCode ?? schoolcode;
+    if (sc) {
+      where.school = { is: { schoolCode: String(sc).trim() } };
+    } else if (schoolId) {
+      const s = String(schoolId);
+      if (s.length === 4 && s.startsWith('0')) {
+        where.school = { is: { schoolCode: s } };
+      } else {
+        where.schoolId = parseInt(schoolId);
+      }
     }
 
     if (grade) {
@@ -132,10 +249,24 @@ export const getStudents = async (req, res) => {
 };
 
 export const getStudent = async (req, res) => {
-  const { id } = req.params;
+  const { id } = req.query;
+  const { email, rollNo } = req.query;
   try {
+    let where;
+    if (id) {
+      where = { id: parseInt(id) };
+    } else if (email) {
+      where = { email };
+    } else if (rollNo) {
+      where = { rollNo };
+    }
+
+    if (!where) {
+      return res.status(400).json({ error: 'Provide id, email, or rollNo to fetch student' });
+    }
+
     const student = await prisma.student.findUnique({
-      where: { id: parseInt(id) },
+      where,
       include: {
         school: {
           select: {
@@ -169,13 +300,41 @@ export const getStudent = async (req, res) => {
 
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
-  const { name, email, grade, dateOfBirth, schoolId, classroomId, subjectIds } = req.body;
+  const { 
+    name, 
+    email, 
+    grade, 
+    dateOfBirth, 
+    gender,
+    previousSchoolName,
+    previousClass,
+    previousGrade,
+    promotedToClass,
+    totalAdmissionAmount,
+    monthlyFees,
+    admissionDate,
+    admissionReceiptNo,
+    admissionReceiptLink,
+    schoolId, 
+    classroomId, 
+    subjectIds 
+  } = req.body;
   try {
     const data = {
       name,
       email,
       grade,
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      gender,
+      previousSchoolName,
+      previousClass,
+      previousGrade,
+      promotedToClass,
+      totalAdmissionAmount: totalAdmissionAmount !== undefined && totalAdmissionAmount !== null ? parseFloat(totalAdmissionAmount) : undefined,
+      monthlyFees: monthlyFees !== undefined && monthlyFees !== null ? parseFloat(monthlyFees) : undefined,
+      admissionDate: admissionDate ? new Date(admissionDate) : undefined,
+      admissionReceiptNo,
+      admissionReceiptLink,
       school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
     };
 

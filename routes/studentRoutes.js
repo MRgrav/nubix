@@ -19,7 +19,7 @@ router.get('/', authenticate,authorize('ADMIN', 'STAFF'), getStudents);
 router.put('/profile/:id', authenticate, studentProfileValidation, updateStudentProfile);
 
 // Specific ID routes
-router.get('/:id', authenticate, getStudent);
+router.get('/student', authenticate, getStudent);
 router.put('/:id', authenticate, authorize('ADMIN', 'STAFF'), studentValidation, updateStudent);
 router.delete('/:id', authenticate, authorize('ADMIN'), deleteStudent);
 

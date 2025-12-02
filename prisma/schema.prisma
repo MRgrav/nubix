@@ -35,9 +35,21 @@ model Student {
   id          Int       @id @default(autoincrement())
   name        String
   email       String    @unique
+  rollNo      String?   @unique
   grade       String?
   dateOfBirth DateTime?
   enrolledAt  DateTime  @default(now())
+
+  gender                String?
+  previousSchoolName    String?
+  previousClass         String?
+  previousGrade         String?
+  promotedToClass       String?
+  totalAdmissionAmount  Float?
+  monthlyFees           Float?
+  admissionDate         DateTime?
+  admissionReceiptNo    String?
+  admissionReceiptLink  String?
 
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
