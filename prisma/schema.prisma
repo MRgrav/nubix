@@ -29,6 +29,7 @@ model School {
   subjects    Subject[]
   examinations Examination[]
   assignments Assignment[]
+  timetableSlots TimetableSlot[]
 }
 
 model Student {
@@ -141,6 +142,7 @@ model Staff {
 
   // assignments created by staff
   assignments Assignment[]
+  timetableSlots TimetableSlot[]
 }
 
 enum Role {
@@ -210,6 +212,7 @@ model Subject {
   school     School?  @relation(fields: [schoolId], references: [id])
   schoolId   Int?
 
+  timetableSlots TimetableSlot[]
 }
 
 model Classroom {
@@ -228,6 +231,7 @@ model Classroom {
 
   // assignments for this classroom
   assignments Assignment[]
+  timetableSlots TimetableSlot[]
 }
 
 enum ExaminationStatus {
@@ -235,6 +239,21 @@ enum ExaminationStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum SlotType {
+  CLASS
+  BREAK
 }
 
 model Examination {
@@ -304,4 +323,34 @@ model Assignment {
   @@index([createdById])
   @@index([fromDate])
   @@index([toDate])
+}
+
+model TimetableSlot {
+  id            Int       @id @default(autoincrement())
+  day           DayOfWeek
+  slotType      SlotType
+  startMinutes  Int
+  endMinutes    Int
+  academicYear  String
+  notes         String?
+
+  school        School    @relation(fields: [schoolId], references: [id])
+  schoolId      Int
+
+  classroom     Classroom @relation(fields: [classroomId], references: [id])
+  classroomId   Int
+
+  subject       Subject?  @relation(fields: [subjectId], references: [id])
+  subjectId     Int?
+
+  teacher       Staff?    @relation(fields: [teacherId], references: [id])
+  teacherId     Int?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([schoolId])
+  @@index([classroomId])
+  @@index([day])
+  @@index([academicYear])
 }

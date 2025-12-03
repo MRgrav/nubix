@@ -9,6 +9,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import examinationRoutes from './routes/examinationRoutes.js';
 import staffRoutes from './routes/staffRoutes.js';
 import assignmentRoutes from './routes/assignmentRoutes.js';
+import timetableRoutes from './routes/timetableRoutes.js';
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -22,6 +23,7 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/examinations', examinationRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/assignments', assignmentRoutes);
+app.use('/api/timetable', timetableRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

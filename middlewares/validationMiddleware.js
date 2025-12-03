@@ -96,3 +96,24 @@ export const assignmentValidation = [
   body('description').optional(),
   validateRequest
 ];
+
+export const timetableSlotValidation = [
+  body('schoolId').optional().isInt().withMessage('schoolId must be an integer'),
+  body('schoolCode').optional().isLength({ min: 4, max: 4 }).withMessage('schoolCode must be 4 characters'),
+  body().custom((_, { req }) => {
+    if (!req.body.schoolId && !req.body.schoolCode) {
+      throw new Error('Either schoolId or schoolCode is required');
+    }
+    return true;
+  }),
+  body('classroomId').isInt().withMessage('Valid classroom ID is required'),
+  body('day').isIn(['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY']).withMessage('Invalid day'),
+  body('slotType').isIn(['CLASS','BREAK']).withMessage('Invalid slot type'),
+  body('startTime').matches(/^([01]?\d|2[0-3]):([0-5]\d)$/).withMessage('startTime must be HH:mm'),
+  body('endTime').matches(/^([01]?\d|2[0-3]):([0-5]\d)$/).withMessage('endTime must be HH:mm'),
+  body('academicYear').notEmpty().withMessage('Academic year is required'),
+  body('subjectId').optional().isInt(),
+  body('teacherId').optional().isInt(),
+  body('notes').optional(),
+  validateRequest
+];
