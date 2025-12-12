@@ -3,10 +3,11 @@ import prisma from '../models/prisma.js';
 // CRUD for Class (named Classroom to avoid reserved word confusion)
 export const createClassroom = async (req, res) => {
   try {
-    const { name, schoolId } = req.body;
+    const { name, schoolId, section } = req.body;
     const classroom = await prisma.classroom.create({
       data: {
         name,
+        section: section || 'A',
         school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
       }
     });
@@ -48,11 +49,12 @@ export const getClassroom = async (req, res) => {
 export const updateClassroom = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, schoolId } = req.body;
+    const { name, schoolId, section } = req.body;
     const classroom = await prisma.classroom.update({
       where: { id: parseInt(id) },
       data: {
         name,
+        section,
         school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined
       }
     });
