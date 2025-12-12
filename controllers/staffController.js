@@ -1,4 +1,6 @@
 import prisma from '../models/prisma.js';
+import bcrypt from 'bcryptjs';
+import { generateSecurePassword } from './authController.js';
 
 const OPTIONAL_STRING_FIELDS = [
   'employeeId',
@@ -85,10 +87,21 @@ const buildStaffPayload = (body) => {
 };
 
 export const createStaff = async (req, res) => {
-  const { schoolId } = req.body;
+  const { schoolId, email } = req.body;
+  
+  if (!email || !schoolId) {
+    return res.status(400).json({ error: 'Email and School ID are required' });
+  }
+
   try {
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered in system' });
+    }
+
     const existingStaff = await prisma.staff.findUnique({
-      where: { email: req.body.email }
+      where: { email }
     });
 
     if (existingStaff) {
@@ -98,22 +111,50 @@ export const createStaff = async (req, res) => {
     }
 
     const staffData = buildStaffPayload(req.body);
-    staffData.school = { connect: { id: parseInt(schoolId, 10) } };
+    
+    // Generate password
+    const password = generateSecurePassword();
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    const staff = await prisma.staff.create({
-      data: staffData,
-      include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-            schoolCode: true
+    const result = await prisma.$transaction(async (tx) => {
+      // Create User
+      const user = await tx.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          role: 'STAFF',
+          schoolId: parseInt(schoolId, 10)
+        }
+      });
+
+      // Create Staff linked to User
+      staffData.school = { connect: { id: parseInt(schoolId, 10) } };
+      staffData.user = { connect: { id: user.id } };
+
+      const staff = await tx.staff.create({
+        data: staffData,
+        include: {
+          school: {
+            select: {
+              id: true,
+              name: true,
+              schoolCode: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              email: true,
+              role: true
+            }
           }
         }
-      }
+      });
+      
+      return staff;
     });
 
-    res.status(201).json(staff);
+    res.status(201).json({ ...result, generatedPassword: password });
   } catch (err) {
     console.error(err);
     if (err.code === 'P2002') {

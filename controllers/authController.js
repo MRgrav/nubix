@@ -30,7 +30,7 @@ const generateTokens = (userId, role) => {
   return { accessToken, refreshToken };
 };
 
-const generateSecurePassword = () => {
+export const generateSecurePassword = () => {
   // Generate a random password with at least one uppercase, one lowercase, one number
   const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';  // Excluding I and O for clarity
   const lowercase = 'abcdefghijkmnpqrstuvwxyz';  // Excluding l and o for clarity
