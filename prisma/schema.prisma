@@ -21,15 +21,16 @@ model School {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  // users associated with this school (admins or system users)
-  users      User[]
-  students   Student[]
-  staff      Staff[]
-  classrooms Classroom[]
-  subjects    Subject[]
-  examinations Examination[]
-  assignments Assignment[]
+  // users associated with this school (a  users          User[]
+  users          User[]
+  students       Student[]
+  staff          Staff[]
+  classrooms     Classroom[]
+  subjects       Subject[]
+  examinations   Examination[]
+  assignments    Assignment[]
   timetableSlots TimetableSlot[]
+  announcements  Announcement[]  @relation("SchoolAnnouncements")
 }
 
 model Student {
@@ -41,16 +42,16 @@ model Student {
   dateOfBirth DateTime?
   enrolledAt  DateTime  @default(now())
 
-  gender                String?
-  previousSchoolName    String?
-  previousClass         String?
-  previousGrade         String?
-  promotedToClass       String?
-  totalAdmissionAmount  Float?
-  monthlyFees           Float?
-  admissionDate         DateTime?
-  admissionReceiptNo    String?
-  admissionReceiptLink  String?
+  gender               String?
+  previousSchoolName   String?
+  previousClass        String?
+  previousGrade        String?
+  promotedToClass      String?
+  totalAdmissionAmount Float?
+  monthlyFees          Float?
+  admissionDate        DateTime?
+  admissionReceiptNo   String?
+  admissionReceiptLink String?
 
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
@@ -63,21 +64,21 @@ model Student {
   classroomId Int?
 
   // subjects the student is enrolled in (many-to-many)
-  subjects     Subject[]
-  
+  subjects Subject[]
+
   // attendance records for the student
-  attendances  Attendance[]
+  attendances Attendance[]
 
   // examination results for the student
   examinationResults ExaminationResult[]
 }
 
 model Staff {
-  id         Int      @id @default(autoincrement())
-  hiredAt    DateTime @default(now())
+  id      Int      @id @default(autoincrement())
+  hiredAt DateTime @default(now())
 
   // --- Basic details tab ---
-  employeeId        String? @unique
+  employeeId        String?   @unique
   title             String?
   name              String
   gender            String?
@@ -138,10 +139,10 @@ model Staff {
   attendances Attendance[]
 
   // subjects taught by staff
-  subjects    Subject[]
+  subjects Subject[]
 
   // assignments created by staff
-  assignments Assignment[]
+  assignments    Assignment[]
   timetableSlots TimetableSlot[]
 }
 
@@ -169,25 +170,26 @@ model User {
 
   student Student?
   staff   Staff?
-  
+
   // optional relation to a School (useful for ADMIN or general user association)
-  school   School? @relation(fields: [schoolId], references: [id])
-  schoolId Int?
+  school        School?        @relation(fields: [schoolId], references: [id])
+  schoolId      Int?
+  announcements Announcement[] @relation("UserAnnouncements")
 }
 
 model Attendance {
-  id         Int              @id @default(autoincrement())
-  date       DateTime
-  status     AttendanceStatus
-  note       String?
-  createdAt  DateTime         @default(now())
+  id        Int              @id @default(autoincrement())
+  date      DateTime
+  status    AttendanceStatus
+  note      String?
+  createdAt DateTime         @default(now())
 
   // Either studentId or staffId will be set
-  student    Student?         @relation(fields: [studentId], references: [id])
-  studentId  Int?
+  student   Student? @relation(fields: [studentId], references: [id])
+  studentId Int?
 
-  staff      Staff?           @relation(fields: [staffId], references: [id])
-  staffId    Int?
+  staff   Staff? @relation(fields: [staffId], references: [id])
+  staffId Int?
 
   @@index([studentId])
   @@index([staffId])
@@ -203,14 +205,14 @@ model Subject {
 
   // teacher responsible for this subject
 
-  teachers     Staff[]  
+  teachers Staff[]
 
   // students enrolled in this subject
   students Student[]
-  
+
   // optional relation to School
-  school     School?  @relation(fields: [schoolId], references: [id])
-  schoolId   Int?
+  school   School? @relation(fields: [schoolId], references: [id])
+  schoolId Int?
 
   timetableSlots TimetableSlot[]
 }
@@ -231,7 +233,7 @@ model Classroom {
   examinations Examination[]
 
   // assignments for this classroom
-  assignments Assignment[]
+  assignments    Assignment[]
   timetableSlots TimetableSlot[]
 }
 
@@ -258,24 +260,24 @@ enum SlotType {
 }
 
 model Examination {
-  id          Int                @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   title       String
   description String?
   subject     String
   examDate    DateTime
-  duration    Int                // duration in minutes
+  duration    Int // duration in minutes
   totalMarks  Float
-  status      ExaminationStatus  @default(SCHEDULED)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  status      ExaminationStatus @default(SCHEDULED)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
-  school      School             @relation(fields: [schoolId], references: [id])
-  schoolId    Int
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
 
-  classroom   Classroom          @relation(fields: [classroomId], references: [id])
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
   classroomId Int
 
-  results     ExaminationResult[]
+  results ExaminationResult[]
 
   @@index([schoolId])
   @@index([classroomId])
@@ -283,17 +285,17 @@ model Examination {
 }
 
 model ExaminationResult {
-  id            Int          @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   marksObtained Float
   remarks       String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  examination   Examination  @relation(fields: [examinationId], references: [id], onDelete: Cascade)
+  examination   Examination @relation(fields: [examinationId], references: [id], onDelete: Cascade)
   examinationId Int
 
-  student       Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  studentId     Int
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId Int
 
   @@unique([examinationId, studentId])
   @@index([studentId])
@@ -303,20 +305,20 @@ model Assignment {
   id          Int      @id @default(autoincrement())
   title       String
   description String?
-  className   String   // e.g. "LKG", "UKG", "Class 1"
+  className   String // e.g. "LKG", "UKG", "Class 1"
   fromDate    DateTime
   toDate      DateTime
-  fileUrl     String   // link to image or PDF
+  fileUrl     String // link to image or PDF
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  school      School    @relation(fields: [schoolId], references: [id])
-  schoolId    Int
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
 
   classroom   Classroom @relation(fields: [classroomId], references: [id])
   classroomId Int
 
-  createdBy   Staff?    @relation(fields: [createdById], references: [id])
+  createdBy   Staff? @relation(fields: [createdById], references: [id])
   createdById Int?
 
   @@index([schoolId])
@@ -327,31 +329,67 @@ model Assignment {
 }
 
 model TimetableSlot {
-  id            Int       @id @default(autoincrement())
-  day           DayOfWeek
-  slotType      SlotType
-  startMinutes  Int
-  endMinutes    Int
-  academicYear  String
-  notes         String?
+  id           Int       @id @default(autoincrement())
+  day          DayOfWeek
+  slotType     SlotType
+  startMinutes Int
+  endMinutes   Int
+  academicYear String
+  notes        String?
 
-  school        School    @relation(fields: [schoolId], references: [id])
-  schoolId      Int
+  school   School @relation(fields: [schoolId], references: [id])
+  schoolId Int
 
-  classroom     Classroom @relation(fields: [classroomId], references: [id])
-  classroomId   Int
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  classroomId Int
 
-  subject       Subject?  @relation(fields: [subjectId], references: [id])
-  subjectId     Int?
+  subject   Subject? @relation(fields: [subjectId], references: [id])
+  subjectId Int?
 
-  teacher       Staff?    @relation(fields: [teacherId], references: [id])
-  teacherId     Int?
+  teacher   Staff? @relation(fields: [teacherId], references: [id])
+  teacherId Int?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([schoolId])
   @@index([classroomId])
   @@index([day])
   @@index([academicYear])
+}
+
+enum AnnouncementType {
+  notice
+  event
+}
+
+model Announcement {
+  id   Int              @id @default(autoincrement())
+  type AnnouncementType
+
+  title       String
+  description String
+
+  link  String?
+  media String?
+
+  targetClass   String?
+  targetSection String?
+
+  isSuspended Boolean @default(false)
+
+  createdById   Int
+  createdByRole Role
+
+  createdBy User @relation("UserAnnouncements", fields: [createdById], references: [id])
+
+  schoolId Int
+  school   School @relation("SchoolAnnouncements", fields: [schoolId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([schoolId, type])
+  @@index([schoolId, isSuspended])
 }

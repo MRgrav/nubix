@@ -3,3 +3,5 @@ node_modules
 .env
 
 /generated/prisma
+extract_nubix_code.py
+nubix_extracted_code.txt
