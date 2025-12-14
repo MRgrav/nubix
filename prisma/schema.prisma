@@ -71,6 +71,7 @@ model Student {
 
   // examination results for the student
   examinationResults ExaminationResult[]
+  ptmRequests        PTMRequest[]
 }
 
 model Staff {
@@ -172,9 +173,12 @@ model User {
   staff   Staff?
 
   // optional relation to a School (useful for ADMIN or general user association)
-  school        School?        @relation(fields: [schoolId], references: [id])
-  schoolId      Int?
-  announcements Announcement[] @relation("UserAnnouncements")
+  school              School?        @relation(fields: [schoolId], references: [id])
+  schoolId            Int?
+  announcements       Announcement[] @relation("UserAnnouncements")
+  ptmRequestsCreated  PTMRequest[]   @relation("PTMRequestedBy")
+  ptmRequestsReceived PTMRequest[]   @relation("PTMRequestedTo")
+  ptmRequestsHandled  PTMRequest[]   @relation("PTMRespondedBy")
 }
 
 model Attendance {
@@ -362,6 +366,12 @@ enum AnnouncementType {
   notice
   event
 }
+enum CreatedRole {
+  STAFF
+  ADMIN
+  PRINCIPAL
+}
+
 
 model Announcement {
   id   Int              @id @default(autoincrement())
@@ -379,7 +389,7 @@ model Announcement {
   isSuspended Boolean @default(false)
 
   createdById   Int
-  createdByRole Role
+  createdByRole CreatedRole  
 
   createdBy User @relation("UserAnnouncements", fields: [createdById], references: [id])
 
@@ -392,4 +402,68 @@ model Announcement {
   @@index([schoolId])
   @@index([schoolId, type])
   @@index([schoolId, isSuspended])
+}
+
+// PTM Schemas
+enum PTMStatus {
+  pending
+  approved
+  postponed
+  rejected
+}
+
+enum PTMMode {
+  online
+  offline
+}
+
+enum PTMRole {
+  STUDENT
+  STAFF
+  ADMIN
+}
+
+model PTMRequest {
+  id Int @id @default(autoincrement())
+
+  // Student involved
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  class   String
+  section String
+
+  // Request creator
+  requestedById   Int
+  requestedBy     User    @relation("PTMRequestedBy", fields: [requestedById], references: [id])
+  requestedByRole PTMRole
+
+  // Receiver
+  requestedToId   Int
+  requestedTo     User    @relation("PTMRequestedTo", fields: [requestedToId], references: [id])
+  requestedToRole PTMRole
+
+  requestedDate DateTime
+  requestedTime String
+  mode          PTMMode  @default(offline)
+
+  status PTMStatus @default(pending)
+
+  responseById   Int?
+  responseBy     User?     @relation("PTMRespondedBy", fields: [responseById], references: [id])
+  responseByRole PTMRole?
+  responseDate   DateTime?
+
+  suggestedDate DateTime?
+  suggestedTime String?
+
+  purpose String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([requestedById])
+  @@index([requestedToId])
+  @@index([status])
 }

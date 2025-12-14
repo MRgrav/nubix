@@ -1,7 +1,8 @@
 export const announcementPermission = (req, res, next) => {
   const role = req.user.role; // STUDENT, STAFF, ADMIN, PRINCIPAL
-  const type = req.body.type || req.query.type;
   const announcement = req.announcement;
+
+  const type = req.method === "POST" ? req.body.type : announcement?.type;
 
   // Students → read only
   if (req.method === "GET" && role === "STUDENT") {
