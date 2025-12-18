@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import prisma from "../models/prisma.js";
 
 // Load environment variables
 dotenv.config();
@@ -14,12 +15,41 @@ export const authenticate = async (req, res, next) => {
     const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      include: {
+        school: { select: { id: true, schoolCode: true } },
+        staff: { include: { school: { select: { id: true, schoolCode: true } } } },
+        student: { include: { school: { select: { id: true, schoolCode: true } } } }
+      }
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    let resolvedSchoolId = user.school?.id || null;
+    let resolvedSchoolCode = user.school?.schoolCode || null;
+
+    if (!resolvedSchoolId || !resolvedSchoolCode) {
+      if (user.staff?.school) {
+        resolvedSchoolId = user.staff.school.id;
+        resolvedSchoolCode = user.staff.school.schoolCode;
+      } else if (user.student?.school) {
+        resolvedSchoolId = user.student.school.id;
+        resolvedSchoolCode = user.student.school.schoolCode;
+      }
+    }
+
     req.user = {
-      id: decoded.userId,
-      userId: decoded.userId,
-      role: decoded.role,
+      id: user.id,
+      userId: user.id,
+      role: user.role,
+      email: user.email,
+      schoolId: resolvedSchoolId || undefined,
+      schoolCode: resolvedSchoolCode || undefined
     };
-    // { userId, role }
+
     next();
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
