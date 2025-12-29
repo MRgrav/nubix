@@ -112,3 +112,59 @@ export const removeStudentFromClass = async (req, res) => {
     res.status(500).json({ error: 'Failed to remove student from class' });
   }
 };
+
+export const getClassTeachers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { academicYear } = req.query;
+    const where = {
+      classroomId: parseInt(id, 10),
+      ...(req.user?.schoolId ? { schoolId: req.user.schoolId } : {}),
+      ...(academicYear ? { academicYear } : {})
+    };
+    const slots = await prisma.timetableSlot.findMany({
+      where,
+      include: {
+        teacher: { select: { id: true, name: true, email: true, role: true } }
+      }
+    });
+    const teachersMap = new Map();
+    for (const s of slots) {
+      if (s.teacher) {
+        teachersMap.set(s.teacher.id, s.teacher);
+      }
+    }
+    res.json({ teachers: Array.from(teachersMap.values()) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch class teachers' });
+  }
+};
+
+export const getClassSubjects = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { academicYear } = req.query;
+    const where = {
+      classroomId: parseInt(id, 10),
+      ...(req.user?.schoolId ? { schoolId: req.user.schoolId } : {}),
+      ...(academicYear ? { academicYear } : {})
+    };
+    const slots = await prisma.timetableSlot.findMany({
+      where,
+      include: {
+        subject: { select: { id: true, name: true, code: true } }
+      }
+    });
+    const subjectsMap = new Map();
+    for (const s of slots) {
+      if (s.subject) {
+        subjectsMap.set(s.subject.id, s.subject);
+      }
+    }
+    res.json({ subjects: Array.from(subjectsMap.values()) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch class subjects' });
+  }
+};

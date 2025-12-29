@@ -6,7 +6,9 @@ import {
   updateClassroom,
   deleteClassroom,
   addStudentToClass,
-  removeStudentFromClass
+  removeStudentFromClass,
+  getClassTeachers,
+  getClassSubjects
 } from '../controllers/classController.js';
 import { authenticate, authorize } from '../middlewares/authMiddleware.js';
 const router = express.Router();
@@ -19,5 +21,8 @@ router.delete('/:id', deleteClassroom);
 
 router.post('/:classId/students',authenticate,authorize('ADMIN', 'STAFF'), addStudentToClass);
 router.delete('/:classId/students', authenticate,authorize('ADMIN', 'STAFF'),removeStudentFromClass);
+
+router.get('/:id/teachers', authenticate, authorize('ADMIN','STAFF','STUDENT'), getClassTeachers);
+router.get('/:id/subjects', authenticate, authorize('ADMIN','STAFF','STUDENT'), getClassSubjects);
 
 export default router;
