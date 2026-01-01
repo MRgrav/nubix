@@ -179,6 +179,8 @@ model User {
   ptmRequestsCreated  PTMRequest[]   @relation("PTMRequestedBy")
   ptmRequestsReceived PTMRequest[]   @relation("PTMRequestedTo")
   ptmRequestsHandled  PTMRequest[]   @relation("PTMRespondedBy")
+  leaveRequests       LeaveRequest[] @relation("LeaveRequestedBy")
+  leaveRequestsApproved LeaveRequest[] @relation("LeaveApprovedBy")
 }
 
 model Attendance {
@@ -466,4 +468,46 @@ model PTMRequest {
   @@index([requestedById])
   @@index([requestedToId])
   @@index([status])
+}
+
+enum LeaveType {
+  casual
+  sick
+  earned
+  other
+}
+
+enum LeaveStatus {
+  pending
+  approved
+  rejected
+}
+
+enum LeaveUserRole {
+  staff
+  admin
+}
+
+model LeaveRequest {
+  id            Int           @id @default(autoincrement())
+  userId        Int
+  user          User          @relation("LeaveRequestedBy", fields: [userId], references: [id], onDelete: Cascade)
+  userRole      LeaveUserRole
+  leaveType     LeaveType
+  reason        String        @db.Text
+  startDate     DateTime      @db.Date
+  endDate       DateTime      @db.Date
+  numberOfDays  Int
+  status        LeaveStatus   @default(pending)
+  approvedBy    Int?
+  approvedByUser User?        @relation("LeaveApprovedBy", fields: [approvedBy], references: [id])
+  approvedAt    DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([approvedBy])
 }

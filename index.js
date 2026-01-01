@@ -15,6 +15,7 @@ import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./swagger.js";
 import basicAuth from "express-basic-auth";
 import ptmRoutes from "./routes/ptmRoutes.js";
+import leaveRoutes from "./routes/leaveRoutes.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -38,6 +39,7 @@ app.use("/api/assignments", assignmentRoutes);
 app.use("/api/timetable", timetableRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/ptm", ptmRoutes);
+app.use("/api/leaves", leaveRoutes);
 
 // Swagger route
 app.use(
