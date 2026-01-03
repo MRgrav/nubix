@@ -1,26 +1,24 @@
-import prisma from '../models/prisma.js';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import nodemailer from 'nodemailer';
+import prisma from "../models/prisma.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 // Create email transporter - Replace with your email service in production
 const transporter = nodemailer.createTransport({
-  host: 'smtp.ethereal.email',
+  host: "smtp.ethereal.email",
   port: 587,
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+    pass: process.env.EMAIL_PASS,
+  },
 });
 
 const generateTokens = (userId, role) => {
-  const accessToken = jwt.sign(
-    { userId, role },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN }
-  );
-  
+  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN,
+  });
+
   const refreshToken = jwt.sign(
     { userId, role },
     process.env.JWT_REFRESH_SECRET,
@@ -32,71 +30,76 @@ const generateTokens = (userId, role) => {
 
 export const generateSecurePassword = () => {
   // Generate a random password with at least one uppercase, one lowercase, one number
-  const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';  // Excluding I and O for clarity
-  const lowercase = 'abcdefghijkmnpqrstuvwxyz';  // Excluding l and o for clarity
-  const numbers = '23456789';  // Excluding 0 and 1 for clarity
-  const special = '@#$%&';
-  
-  let password = '';
+  const uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // Excluding I and O for clarity
+  const lowercase = "abcdefghijkmnpqrstuvwxyz"; // Excluding l and o for clarity
+  const numbers = "23456789"; // Excluding 0 and 1 for clarity
+  const special = "@#$%&";
+
+  let password = "";
   password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
   password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
   password += numbers.charAt(Math.floor(Math.random() * numbers.length));
   password += special.charAt(Math.floor(Math.random() * special.length));
-  
+
   // Add 4 more random characters
   const allChars = uppercase + lowercase + numbers;
-  for(let i = 0; i < 4; i++) {
+  for (let i = 0; i < 4; i++) {
     password += allChars.charAt(Math.floor(Math.random() * allChars.length));
   }
-  
+
   // Shuffle the password
-  return password.split('').sort(() => 0.5 - Math.random()).join('');
+  return password
+    .split("")
+    .sort(() => 0.5 - Math.random())
+    .join("");
 };
 
 export const createUser = async (req, res) => {
   const { email, name, role, schoolId, staffRole } = req.body;
-  
+
   // Only admin can create users
-  if (req.user.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Only administrators can create users' });
+  if (req.user.role !== "ADMIN") {
+    return res
+      .status(403)
+      .json({ error: "Only administrators can create users" });
   }
 
   try {
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already registered' });
+      return res.status(400).json({ error: "Email already registered" });
     }
 
     // Generate a secure random password
     const password = generateSecurePassword();
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     // Create user and associated profile in a transaction
     const result = await prisma.$transaction(async (prisma) => {
       const user = await prisma.user.create({
-        data: { email, password: hashedPassword, role }
+        data: { email, password: hashedPassword, role },
       });
 
       // Create associated profile based on role
-      if (role === 'STUDENT') {
+      if (role === "STUDENT") {
         await prisma.student.create({
           data: {
             name,
             email,
             schoolId: parseInt(schoolId),
-            userId: user.id
-          }
+            userId: user.id,
+          },
         });
-      } else if (role === 'STAFF') {
+      } else if (role === "STAFF") {
         await prisma.staff.create({
           data: {
             name,
             email,
-            role: staffRole || 'TEACHER',
+            role: staffRole || "TEACHER",
             schoolId: parseInt(schoolId),
-            userId: user.id
-          }
+            userId: user.id,
+          },
         });
       }
 
@@ -105,18 +108,18 @@ export const createUser = async (req, res) => {
 
     // Return the generated password (in a real system, this should be emailed)
     res.json({
-      message: 'User created successfully',
+      message: "User created successfully",
       userId: result.id,
       email,
       temporaryPassword: password,
-      note: 'Please securely share these credentials with the user'
+      note: "Please securely share these credentials with the user",
     });
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2002') {
-      return res.status(400).json({ error: 'Email already exists' });
+    if (err.code === "P2002") {
+      return res.status(400).json({ error: "Email already exists" });
     }
-    res.status(500).json({ error: 'User creation failed' });
+    res.status(500).json({ error: "User creation failed" });
   }
 };
 
@@ -127,16 +130,16 @@ export const setupAdmin = async (req, res) => {
     const { email, name, password, schoolCode, schoolName } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ error: 'email and password are required' });
+      return res.status(400).json({ error: "email and password are required" });
     }
 
     // ⛔ Check if user already exists
     const existingUser = await prisma.user.findUnique({
-      where: { email }
+      where: { email },
     });
 
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: "Email already exists" });
     }
 
     // SCHOOL HANDLING
@@ -145,15 +148,15 @@ export const setupAdmin = async (req, res) => {
       const code = String(schoolCode).trim();
 
       let school = await prisma.school.findUnique({
-        where: { schoolCode: code }
+        where: { schoolCode: code },
       });
 
       if (!school) {
         school = await prisma.school.create({
-          data: { 
+          data: {
             name: schoolName || `School ${code}`,
-            schoolCode: code
-          }
+            schoolCode: code,
+          },
         });
       }
 
@@ -166,7 +169,7 @@ export const setupAdmin = async (req, res) => {
       email,
       password: hashedPassword,
       role: "ADMIN",
-      ...(schoolId && { schoolId })
+      ...(schoolId && { schoolId }),
     };
 
     const user = await prisma.user.create({ data: userData });
@@ -175,15 +178,15 @@ export const setupAdmin = async (req, res) => {
       message: "Admin user created",
       userId: user.id,
       email,
-      schoolId
+      schoolId,
     });
-
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Failed to set up admin user' });
+    res
+      .status(500)
+      .json({ error: err.message || "Failed to set up admin user" });
   }
 };
-
 
 export const login = async (req, res) => {
   const { email, password } = req.body;
@@ -195,26 +198,34 @@ export const login = async (req, res) => {
           select: {
             id: true,
             name: true,
-            school: { select: { id: true, name: true } }
-          }
+            grade: true,
+            classroom: {
+              select: {
+                id: true,
+                name: true,
+                section: true,
+              },
+            },
+            school: { select: { id: true, name: true, schoolCode: true } },
+          },
         },
         staff: {
           select: {
             id: true,
             name: true,
-            school: { select: { id: true, name: true } }
-          }
-        }
-      }
+            school: { select: { id: true, name: true, schoolCode: true } },
+          },
+        },
+      },
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
-      return res.status(401).json({ error: 'Invalid password' });
+      return res.status(401).json({ error: "Invalid password" });
     }
 
     const tokens = generateTokens(user.id, user.role);
@@ -223,41 +234,41 @@ export const login = async (req, res) => {
     const { password: _, ...userWithoutPassword } = user;
 
     res.json({
-      message: 'Login successful',
+      message: "Login successful",
       user: userWithoutPassword,
-      ...tokens
+      ...tokens,
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Login failed' });
+    res.status(500).json({ error: "Login failed" });
   }
 };
 
 export const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
-  
+
   if (!refreshToken) {
-    return res.status(400).json({ error: 'Refresh token is required' });
+    return res.status(400).json({ error: "Refresh token is required" });
   }
 
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, role: true }
+      select: { id: true, role: true },
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
 
     const tokens = generateTokens(user.id, user.role);
     res.json(tokens);
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({ error: 'Refresh token expired' });
+      return res.status(401).json({ error: "Refresh token expired" });
     }
-    res.status(401).json({ error: 'Invalid refresh token' });
+    res.status(401).json({ error: "Invalid refresh token" });
   }
 };
 
@@ -267,19 +278,19 @@ export const forgotPassword = async (req, res) => {
 
     // Find user by email
     const user = await prisma.user.findUnique({
-      where: { email }
+      where: { email },
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
 
     // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetToken = crypto.randomBytes(32).toString("hex");
     const passwordResetToken = crypto
-      .createHash('sha256')
+      .createHash("sha256")
       .update(resetToken)
-      .digest('hex');
+      .digest("hex");
 
     // Set token expiry to 10 minutes from now
     const passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
@@ -289,8 +300,8 @@ export const forgotPassword = async (req, res) => {
       where: { id: user.id },
       data: {
         resetToken: passwordResetToken,
-        resetTokenExpiresAt: passwordResetExpires
-      }
+        resetTokenExpiresAt: passwordResetExpires,
+      },
     });
 
     // Create reset URL
@@ -300,24 +311,24 @@ export const forgotPassword = async (req, res) => {
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: user.email,
-      subject: 'Password Reset Request',
+      subject: "Password Reset Request",
       html: `
         <p>You requested a password reset.</p>
         <p>Click this link to reset your password (valid for 10 minutes):</p>
         <a href="${resetUrl}">${resetUrl}</a>
         <p>If you didn't request this, please ignore this email.</p>
-      `
+      `,
     };
 
     await transporter.sendMail(mailOptions);
 
     res.json({
-      message: 'Password reset link sent to email'
+      message: "Password reset link sent to email",
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({
-      error: 'Error sending password reset email'
+      error: "Error sending password reset email",
     });
   }
 };
@@ -328,24 +339,21 @@ export const resetPassword = async (req, res) => {
     const { password } = req.body;
 
     // Hash the token for comparison
-    const hashedToken = crypto
-      .createHash('sha256')
-      .update(token)
-      .digest('hex');
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
     // Find user with valid reset token
     const user = await prisma.user.findFirst({
       where: {
         resetToken: hashedToken,
         resetTokenExpiresAt: {
-          gt: new Date()
-        }
-      }
+          gt: new Date(),
+        },
+      },
     });
 
     if (!user) {
       return res.status(400).json({
-        error: 'Invalid or expired reset token'
+        error: "Invalid or expired reset token",
       });
     }
 
@@ -358,17 +366,17 @@ export const resetPassword = async (req, res) => {
       data: {
         password: hashedPassword,
         resetToken: null,
-        resetTokenExpiresAt: null
-      }
+        resetTokenExpiresAt: null,
+      },
     });
 
     res.json({
-      message: 'Password reset successful'
+      message: "Password reset successful",
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({
-      error: 'Error resetting password'
+      error: "Error resetting password",
     });
   }
 };
@@ -380,20 +388,20 @@ export const changePassword = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     const valid = await bcrypt.compare(currentPassword, user.password);
-    
+
     if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
+      return res.status(401).json({ error: "Current password is incorrect" });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({
       where: { id: userId },
-      data: { password: hashedPassword }
+      data: { password: hashedPassword },
     });
 
-    res.json({ message: 'Password updated successfully' });
+    res.json({ message: "Password updated successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to update password' });
+    res.status(500).json({ error: "Failed to update password" });
   }
 };
