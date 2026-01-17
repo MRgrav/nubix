@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import {
   createClassroom,
   getClassrooms,
@@ -8,21 +8,45 @@ import {
   addStudentToClass,
   removeStudentFromClass,
   getClassTeachers,
-  getClassSubjects
-} from '../controllers/classController.js';
-import { authenticate, authorize } from '../middlewares/authMiddleware.js';
+  getClassSubjects,
+  getStudentsInClass,
+} from "../controllers/classController.js";
+import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 const router = express.Router();
+router.use(authenticate);
 
-router.get('/',authenticate,authorize('ADMIN', 'STAFF'), getClassrooms);
-router.post('/', authenticate,authorize('ADMIN', 'STAFF'),createClassroom);
-router.get('/:id',authenticate,authorize('ADMIN', 'STAFF'), getClassroom);
-router.put('/:id', authenticate,authorize('ADMIN', 'STAFF'),updateClassroom);
-router.delete('/:id', deleteClassroom);
+router.get("/", authorize("ADMIN", "STAFF"), getClassrooms);
+router.post("/", authorize("ADMIN", "STAFF"), createClassroom);
+router.get("/:id", authorize("ADMIN", "STAFF"), getClassroom);
+router.put("/:id", authorize("ADMIN", "STAFF"), updateClassroom);
+router.delete("/:id", deleteClassroom);
 
-router.post('/:classId/students',authenticate,authorize('ADMIN', 'STAFF'), addStudentToClass);
-router.delete('/:classId/students', authenticate,authorize('ADMIN', 'STAFF'),removeStudentFromClass);
+router.get(
+  "/:classId/students",
+  authorize("ADMIN", "STAFF"),
+  getStudentsInClass,
+);
 
-router.get('/:id/teachers', authenticate, authorize('ADMIN','STAFF','STUDENT'), getClassTeachers);
-router.get('/:id/subjects', authenticate, authorize('ADMIN','STAFF','STUDENT'), getClassSubjects);
+router.post(
+  "/:classId/students",
+  authorize("ADMIN", "STAFF"),
+  addStudentToClass,
+);
+router.delete(
+  "/:classId/students",
+  authorize("ADMIN", "STAFF"),
+  removeStudentFromClass,
+);
+
+router.get(
+  "/:id/teachers",
+  authorize("ADMIN", "STAFF", "STUDENT"),
+  getClassTeachers,
+);
+router.get(
+  "/:id/subjects",
+  authorize("ADMIN", "STAFF", "STUDENT"),
+  getClassSubjects,
+);
 
 export default router;

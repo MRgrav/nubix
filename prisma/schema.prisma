@@ -13,15 +13,90 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model School {
-  id         Int      @id @default(autoincrement())
-  name       String
-  schoolCode String   @unique @db.Char(4)
-  address    String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model AcademicYear {
+  id        Int      @id @default(autoincrement())
+  label     String   @unique // "2025-2026"
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(false)
 
-  // users associated with this school (a  users          User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  timetableSlots    TimetableSlot[]
+  examinations      Examination[]
+  assignments       Assignment[]
+  studentStreams    StudentStream[]
+  Attendance        Attendance[]
+  ExaminationResult ExaminationResult[]
+  Announcement      Announcement[]
+  PTMRequest        PTMRequest[]
+
+  teacherAssignments TeacherAssignment[]
+
+  curriculumSubjects CurriculumSubject[]
+
+  feeStructures     FeeStructure[]
+  studentFees       StudentFee[]
+  lateFeeConfigs    LateFeeConfig[]
+  studentTransports StudentTransport[]
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+}
+
+model Stream {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique // "Science", "Commerce"
+  description String?
+
+  studentStreams StudentStream[]
+  announcements  Announcement[]  @relation("StreamAnnouncements")
+  assignments    Assignment[]    @relation("StreamAssignments")
+
+  teacherAssignments TeacherAssignment[]
+
+  curriculumSubjects CurriculumSubject[]
+
+  feeStructures FeeStructure[]
+
+  @@index([name])
+}
+
+model StudentStream {
+  id Int @id @default(autoincrement())
+
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
+
+  classroomId Int
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+
+  streamId Int?
+  stream   Stream? @relation(fields: [streamId], references: [id])
+
+  rollNo String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([academicYearId, studentId])
+  @@unique([academicYearId, classroomId, rollNo])
+  @@index([studentId, academicYearId])
+  @@index([classroomId])
+}
+
+model School {
+  id           Int      @id @default(autoincrement())
+  name         String
+  schoolCode   String   @unique @db.Char(4)
+  address      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  rollNoFormat String?
+
   users          User[]
   students       Student[]
   staff          Staff[]
@@ -31,13 +106,58 @@ model School {
   assignments    Assignment[]
   timetableSlots TimetableSlot[]
   announcements  Announcement[]  @relation("SchoolAnnouncements")
+  curriculumSubjects CurriculumSubject[]
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  INACTIVE
+  COMPLETED
+}
+
+model TeacherAssignment {
+  id        Int   @id @default(autoincrement())
+  teacherId Int
+  teacher   Staff @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  subjectId Int
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  classroomId Int?
+  classroom   Classroom? @relation(fields: [classroomId], references: [id], onDelete: SetNull)
+
+  streamId Int?
+  stream   Stream? @relation(fields: [streamId], references: [id], onDelete: SetNull)
+
+  academicYearId Int?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
+
+  fromDate DateTime? // For temporary assignments
+  toDate   DateTime? // Null = permanent
+
+  status AssignmentStatus @default(ACTIVE)
+
+  assignedById Int
+  assignedBy   User @relation(fields: [assignedById], references: [id])
+
+  assignedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Retain only the full unique index to allow date-based variations
+  @@unique([teacherId, subjectId, classroomId, academicYearId, streamId, fromDate, toDate], map: "teacher_assignment_full_idx")
+  @@index([teacherId])
+  @@index([subjectId])
+  @@index([classroomId])
+  @@index([academicYearId])
+  @@index([streamId])
 }
 
 model Student {
   id          Int       @id @default(autoincrement())
   name        String
   email       String    @unique
-  rollNo      String?   @unique
   grade       String?
   dateOfBirth DateTime?
   enrolledAt  DateTime  @default(now())
@@ -72,6 +192,13 @@ model Student {
   // examination results for the student
   examinationResults ExaminationResult[]
   ptmRequests        PTMRequest[]
+
+  studentStreams StudentStream[]
+
+  studentFees       StudentFee[]
+  studentTransports StudentTransport[]
+
+  parents     StudentParent[]
 }
 
 model Staff {
@@ -145,13 +272,18 @@ model Staff {
   // assignments created by staff
   assignments    Assignment[]
   timetableSlots TimetableSlot[]
+
+  teacherAssignments TeacherAssignment[]
 }
 
 enum Role {
   STUDENT
   STAFF
   ADMIN
+  PARENT
 }
+
+
 
 enum AttendanceStatus {
   PRESENT
@@ -173,14 +305,20 @@ model User {
   staff   Staff?
 
   // optional relation to a School (useful for ADMIN or general user association)
-  school              School?        @relation(fields: [schoolId], references: [id])
-  schoolId            Int?
-  announcements       Announcement[] @relation("UserAnnouncements")
-  ptmRequestsCreated  PTMRequest[]   @relation("PTMRequestedBy")
-  ptmRequestsReceived PTMRequest[]   @relation("PTMRequestedTo")
-  ptmRequestsHandled  PTMRequest[]   @relation("PTMRespondedBy")
-  leaveRequests       LeaveRequest[] @relation("LeaveRequestedBy")
+  school                School?        @relation(fields: [schoolId], references: [id])
+  schoolId              Int?
+  announcements         Announcement[] @relation("UserAnnouncements")
+  ptmRequestsCreated    PTMRequest[]   @relation("PTMRequestedBy")
+  ptmRequestsReceived   PTMRequest[]   @relation("PTMRequestedTo")
+  ptmRequestsHandled    PTMRequest[]   @relation("PTMRespondedBy")
+  leaveRequests         LeaveRequest[] @relation("LeaveRequestedBy")
   leaveRequestsApproved LeaveRequest[] @relation("LeaveApprovedBy")
+
+  discountsCreated   Discount[]      @relation
+  adjustmentsCreated FeeAdjustment[] @relation
+
+  teacherAssignmentsAssigned TeacherAssignment[] @relation
+  parent      Parent?
 }
 
 model Attendance {
@@ -197,6 +335,11 @@ model Attendance {
   staff   Staff? @relation(fields: [staffId], references: [id])
   staffId Int?
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  @@unique([studentId, date, academicYearId])
+  @@unique([staffId, date, academicYearId])
   @@index([studentId])
   @@index([staffId])
   @@index([date])
@@ -221,6 +364,10 @@ model Subject {
   schoolId Int?
 
   timetableSlots TimetableSlot[]
+
+  teacherAssignments TeacherAssignment[]
+
+  curriculumSubjects CurriculumSubject[]
 }
 
 model Classroom {
@@ -241,6 +388,9 @@ model Classroom {
   // assignments for this classroom
   assignments    Assignment[]
   timetableSlots TimetableSlot[]
+  StudentStream  StudentStream[]
+
+  teacherAssignments TeacherAssignment[]
 }
 
 enum ExaminationStatus {
@@ -285,6 +435,10 @@ model Examination {
 
   results ExaminationResult[]
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  @@index([academicYearId])
   @@index([schoolId])
   @@index([classroomId])
   @@index([examDate])
@@ -303,7 +457,11 @@ model ExaminationResult {
   student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   studentId Int
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
   @@unique([examinationId, studentId])
+  @@index([studentId, academicYearId])
   @@index([studentId])
 }
 
@@ -318,6 +476,11 @@ model Assignment {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  targetClass   String? // e.g. "11"
+  targetSection String? // e.g. "A"
+  streamId      Int? // e.g. Science
+  stream        Stream? @relation("StreamAssignments", fields: [streamId], references: [id])
+
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
 
@@ -327,6 +490,10 @@ model Assignment {
   createdBy   Staff? @relation(fields: [createdById], references: [id])
   createdById Int?
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  @@index([classroomId, academicYearId])
   @@index([schoolId])
   @@index([classroomId])
   @@index([createdById])
@@ -340,7 +507,6 @@ model TimetableSlot {
   slotType     SlotType
   startMinutes Int
   endMinutes   Int
-  academicYear String
   notes        String?
 
   school   School @relation(fields: [schoolId], references: [id])
@@ -358,22 +524,25 @@ model TimetableSlot {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
   @@index([schoolId])
   @@index([classroomId])
   @@index([day])
-  @@index([academicYear])
+  @@index([academicYearId])
 }
 
 enum AnnouncementType {
   notice
   event
 }
+
 enum CreatedRole {
   STAFF
   ADMIN
   PRINCIPAL
 }
-
 
 model Announcement {
   id   Int              @id @default(autoincrement())
@@ -391,15 +560,21 @@ model Announcement {
   isSuspended Boolean @default(false)
 
   createdById   Int
-  createdByRole CreatedRole  
+  createdByRole CreatedRole
 
   createdBy User @relation("UserAnnouncements", fields: [createdById], references: [id])
 
   schoolId Int
   school   School @relation("SchoolAnnouncements", fields: [schoolId], references: [id])
 
+  streamId Int?
+  stream   Stream? @relation("StreamAnnouncements", fields: [streamId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  academicYearId Int?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
 
   @@index([schoolId])
   @@index([schoolId, type])
@@ -423,6 +598,7 @@ enum PTMRole {
   STUDENT
   STAFF
   ADMIN
+  PARENT
 }
 
 model PTMRequest {
@@ -461,9 +637,13 @@ model PTMRequest {
 
   purpose String?
 
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([academicYearId])
   @@index([studentId])
   @@index([requestedById])
   @@index([requestedToId])
@@ -489,25 +669,334 @@ enum LeaveUserRole {
 }
 
 model LeaveRequest {
-  id            Int           @id @default(autoincrement())
-  userId        Int
-  user          User          @relation("LeaveRequestedBy", fields: [userId], references: [id], onDelete: Cascade)
-  userRole      LeaveUserRole
-  leaveType     LeaveType
-  reason        String        @db.Text
-  startDate     DateTime      @db.Date
-  endDate       DateTime      @db.Date
-  numberOfDays  Int
-  status        LeaveStatus   @default(pending)
-  approvedBy    Int?
-  approvedByUser User?        @relation("LeaveApprovedBy", fields: [approvedBy], references: [id])
-  approvedAt    DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  user           User          @relation("LeaveRequestedBy", fields: [userId], references: [id], onDelete: Cascade)
+  userRole       LeaveUserRole
+  leaveType      LeaveType
+  reason         String        @db.Text
+  startDate      DateTime      @db.Date
+  endDate        DateTime      @db.Date
+  numberOfDays   Int
+  status         LeaveStatus   @default(pending)
+  approvedBy     Int?
+  approvedByUser User?         @relation("LeaveApprovedBy", fields: [approvedBy], references: [id])
+  approvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@index([userId])
   @@index([status])
   @@index([startDate])
   @@index([endDate])
   @@index([approvedBy])
+}
+
+enum CurriculumCategory {
+  CORE
+  ELECTIVE
+  ACTIVITY
+}
+
+model CurriculumSubject {
+  id Int @id @default(autoincrement())
+
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  className String // e.g., "Class 11"
+
+  streamId Int?
+  stream   Stream? @relation(fields: [streamId], references: [id], onDelete: SetNull)
+
+  subjectId Int
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  category    CurriculumCategory
+  isMandatory Boolean            @default(true)
+
+  schoolId       Int
+  school         School   @relation(fields: [schoolId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([academicYearId, className, streamId, subjectId])
+  @@index([academicYearId])
+  @@index([className])
+  @@index([streamId])
+  @@index([subjectId])
+}
+
+enum FeeCategoryType {
+  TUITION
+  TRANSPORT
+  EXAM
+  ADMISSION
+  REGISTRATION
+  CAUTION_MONEY
+  ID_CARD
+  ANNUAL_CHARGES
+  LIBRARY
+  COMPUTER
+  LABORATORY
+  SPORTS
+  ARTS
+  HOSTEL
+  MESS
+  BOOKS
+  UNIFORM
+  INSURANCE
+  LAB
+  OTHER
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  ONLINE
+  CHEQUE
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+enum AdjustmentType {
+  REFUND
+  FINE
+  DISCOUNT
+  OTHER
+}
+
+model FeeCategory {
+  id          Int             @id @default(autoincrement())
+  name        String          @unique
+  type        FeeCategoryType
+  description String?
+  isDefault   Boolean         @default(false) // Built-in like Tuition
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  feeStructures FeeStructure[]
+}
+
+model FeeStructure {
+  id             Int      @id @default(autoincrement())
+  academicYearId Int
+  className      String // e.g., "Class 11"
+  streamId       Int?
+  categoryId     Int
+  amount         Float
+  isLocked       Boolean  @default(false) // For previous years
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  stream       Stream?      @relation(fields: [streamId], references: [id], onDelete: SetNull)
+  category     FeeCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  studentFeeItems StudentFeeItem[]
+
+  @@unique([academicYearId, className, streamId, categoryId])
+  @@index([academicYearId])
+  @@index([className])
+  @@index([streamId])
+  @@index([categoryId])
+}
+
+model StudentFee {
+  id             Int @id @default(autoincrement())
+  studentId      Int
+  academicYearId Int
+
+  totalAmount     Float
+  paidAmount      Float     @default(0)
+  dueAmount       Float
+  lastPaymentDate DateTime?
+  isFrozen        Boolean   @default(false) // Freeze after admission
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  payments    Payment[]
+  discounts   Discount[]
+  adjustments FeeAdjustment[]
+  lateFees    LateFee[]
+  items       StudentFeeItem[]
+
+  @@unique([studentId, academicYearId])
+  @@index([studentId])
+  @@index([academicYearId])
+}
+
+model StudentFeeItem {
+  id             Int      @id @default(autoincrement())
+  studentFeeId   Int
+  feeStructureId Int
+  assignedAmount Float // Copy of amount at time of assignment (for history)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  studentFee   StudentFee   @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id])
+
+  @@unique([studentFeeId, feeStructureId])
+  @@index([studentFeeId])
+  @@index([feeStructureId])
+}
+
+model Payment {
+  id           Int           @id @default(autoincrement())
+  studentFeeId Int
+  amount       Float
+  paymentDate  DateTime      @default(now())
+  method       PaymentMethod
+  receiptNo    String?       @unique
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+
+  @@index([studentFeeId])
+  @@index([paymentDate])
+}
+
+model Discount {
+  id           Int          @id @default(autoincrement())
+  studentFeeId Int
+  type         DiscountType
+  amount       Float? // For FIXED
+  percentage   Float? // For PERCENTAGE
+  reason       String
+  appliedDate  DateTime     @default(now())
+  createdById  Int // Admin/Staff who applied
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation(fields: [createdById], references: [id])
+
+  @@index([studentFeeId])
+}
+
+model LateFeeConfig {
+  id             Int      @id @default(autoincrement())
+  academicYearId Int
+  fineAmount     Float
+  isPercentage   Boolean  @default(false) // % of due or fixed
+  perPeriod      String // e.g., "MONTHLY"
+  graceDays      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  @@unique([academicYearId])
+}
+
+model LateFee {
+  id           Int      @id @default(autoincrement())
+  studentFeeId Int
+  amount       Float
+  appliedDate  DateTime @default(now())
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+
+  @@index([studentFeeId])
+}
+
+model TransportRoute {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  feeAmount   Float
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  studentTransports StudentTransport[]
+}
+
+model StudentTransport {
+  id             Int       @id @default(autoincrement())
+  studentId      Int
+  academicYearId Int
+  routeId        Int
+  startDate      DateTime
+  endDate        DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  student      Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear   @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  route        TransportRoute @relation(fields: [routeId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, academicYearId])
+  @@index([studentId])
+  @@index([routeId])
+}
+
+model FeeAdjustment {
+  id             Int            @id @default(autoincrement())
+  studentFeeId   Int
+  type           AdjustmentType
+  amount         Float // Negative for refund
+  reason         String
+  adjustmentDate DateTime       @default(now())
+  createdById    Int
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  studentFee StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation(fields: [createdById], references: [id])
+
+  @@index([studentFeeId])
+}
+
+
+enum ParentType {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+model Parent {
+  id        Int      @id @default(autoincrement())
+  type      ParentType
+  name      String   // Required in controller
+  email     String   @unique
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)  // For soft delete
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    Int?     @unique
+
+  students  StudentParent[]  // Many-to-many
+}
+
+model StudentParent {
+  studentId Int
+  parentId  Int
+  isPrimary Boolean  @default(false)
+
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, parentId])
+  @@index([studentId])
+  @@index([parentId])
 }

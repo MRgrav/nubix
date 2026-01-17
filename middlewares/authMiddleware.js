@@ -19,9 +19,13 @@ export const authenticate = async (req, res, next) => {
       where: { id: decoded.userId },
       include: {
         school: { select: { id: true, schoolCode: true } },
-        staff: { include: { school: { select: { id: true, schoolCode: true } } } },
-        student: { include: { school: { select: { id: true, schoolCode: true } } } }
-      }
+        staff: {
+          include: { school: { select: { id: true, schoolCode: true } } },
+        },
+        student: {
+          include: { school: { select: { id: true, schoolCode: true } } },
+        },
+      },
     });
 
     if (!user) {
@@ -42,12 +46,13 @@ export const authenticate = async (req, res, next) => {
     }
 
     req.user = {
+      ...decoded,
       id: user.id,
       userId: user.id,
       role: user.role,
       email: user.email,
       schoolId: resolvedSchoolId || undefined,
-      schoolCode: resolvedSchoolCode || undefined
+      schoolCode: resolvedSchoolCode || undefined,
     };
 
     next();
