@@ -1,15 +1,15 @@
-import prisma from '../models/prisma.js';
+import prisma from "../models/prisma.js";
 
 export const createSchool = async (req, res) => {
   const { name, schoolCode, address } = req.body;
   try {
     const existingSchool = await prisma.school.findFirst({
-      where: { OR: [{ name }, { schoolCode }] }
+      where: { OR: [{ name }, { schoolCode }] },
     });
 
     if (existingSchool) {
       return res.status(400).json({
-        error: 'School with this name or code already exists'
+        error: "School with this name or code already exists",
       });
     }
 
@@ -17,29 +17,37 @@ export const createSchool = async (req, res) => {
       data: { name, schoolCode, address },
       include: {
         _count: {
-          select: { students: true, staff: true }
-        }
-      }
+          select: { students: true, staff: true },
+        },
+      },
     });
 
     res.status(201).json(school);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create school' });
+    res.status(500).json({ error: "Failed to create school" });
   }
 };
 
 export const getSchools = async (req, res) => {
-  const { page = 1, limit = 10, search, sortBy = 'name', order = 'asc' } = req.query;
+  const {
+    page = 1,
+    limit = 10,
+    search,
+    sortBy = "name",
+    order = "asc",
+  } = req.query;
   try {
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const where = search ? {
-      OR: [
-        { name: { contains: search, mode: 'insensitive' } },
-        { schoolCode: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } }
-      ]
-    } : {};
+    const where = search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { schoolCode: { contains: search, mode: "insensitive" } },
+            { address: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {};
 
     const [total, schools] = await prisma.$transaction([
       prisma.school.count({ where }),
@@ -47,13 +55,13 @@ export const getSchools = async (req, res) => {
         where,
         include: {
           _count: {
-            select: { students: true, staff: true }
-          }
+            select: { students: true, staff: true },
+          },
         },
         orderBy: { [sortBy]: order },
         skip,
-        take: parseInt(limit)
-      })
+        take: parseInt(limit),
+      }),
     ]);
 
     res.json({
@@ -62,12 +70,12 @@ export const getSchools = async (req, res) => {
         total,
         pages: Math.ceil(total / parseInt(limit)),
         currentPage: parseInt(page),
-        perPage: parseInt(limit)
-      }
+        perPage: parseInt(limit),
+      },
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch schools' });
+    res.status(500).json({ error: "Failed to fetch schools" });
   }
 };
 
@@ -82,28 +90,49 @@ export const getSchool = async (req, res) => {
             id: true,
             name: true,
             email: true,
-            grade: true
-          }
+            studentStreams: {
+              where: {
+                academicYears: {
+                  select: {
+                    id: true,
+                    label: true,
+                    isActive: true,
+                  },
+                },
+              },
+              select: {
+                classroom: {
+                  select: {
+                    name: true,
+                    section: true,
+                  },
+                },
+                stream: {
+                  select: { name: true },
+                },
+              },
+            },
+          },
         },
         staff: {
           select: {
             id: true,
             name: true,
             email: true,
-            role: true
-          }
-        }
-      }
+            role: true,
+          },
+        },
+      },
     });
 
     if (!school) {
-      return res.status(404).json({ error: 'School not found' });
+      return res.status(404).json({ error: "School not found" });
     }
 
     res.json(school);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch school' });
+    res.status(500).json({ error: "Failed to fetch school" });
   }
 };
 
@@ -113,17 +142,14 @@ export const updateSchool = async (req, res) => {
   try {
     const existingSchool = await prisma.school.findFirst({
       where: {
-        OR: [
-          { name },
-          { schoolCode }
-        ],
-        NOT: { id: parseInt(id) }
-      }
+        OR: [{ name }, { schoolCode }],
+        NOT: { id: parseInt(id) },
+      },
     });
 
     if (existingSchool) {
       return res.status(400).json({
-        error: 'School with this name or code already exists'
+        error: "School with this name or code already exists",
       });
     }
 
@@ -132,18 +158,18 @@ export const updateSchool = async (req, res) => {
       data: { name, schoolCode, address },
       include: {
         _count: {
-          select: { students: true, staff: true }
-        }
-      }
+          select: { students: true, staff: true },
+        },
+      },
     });
 
     res.json(school);
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2025') {
-      return res.status(404).json({ error: 'School not found' });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "School not found" });
     }
-    res.status(500).json({ error: 'Failed to update school' });
+    res.status(500).json({ error: "Failed to update school" });
   }
 };
 
@@ -154,28 +180,28 @@ export const deleteSchool = async (req, res) => {
       where: { id: parseInt(id) },
       include: {
         _count: {
-          select: { students: true, staff: true }
-        }
-      }
+          select: { students: true, staff: true },
+        },
+      },
     });
 
     if (!school) {
-      return res.status(404).json({ error: 'School not found' });
+      return res.status(404).json({ error: "School not found" });
     }
 
     if (school._count.students > 0 || school._count.staff > 0) {
       return res.status(400).json({
-        error: 'Cannot delete school with existing students or staff'
+        error: "Cannot delete school with existing students or staff",
       });
     }
 
     await prisma.school.delete({
-      where: { id: parseInt(id) }
+      where: { id: parseInt(id) },
     });
 
-    res.json({ message: 'School deleted successfully' });
+    res.json({ message: "School deleted successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to delete school' });
+    res.status(500).json({ error: "Failed to delete school" });
   }
 };

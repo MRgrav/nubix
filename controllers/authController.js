@@ -3,6 +3,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import { sendError, sendSuccess } from "../utils/responseStructure.js";
+
+import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 
 // Create email transporter - Replace with your email service in production
 const transporter = nodemailer.createTransport({
@@ -14,16 +17,17 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const generateTokens = (userId, role) => {
-  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN,
+const generateTokens = (userId, role, schoolId, actingAsStudentId = null) => {
+  const payload = { userId, role, schoolId };
+  if (actingAsStudentId) payload.actingAsStudentId = actingAsStudentId;
+
+  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "3h",
   });
 
-  const refreshToken = jwt.sign(
-    { userId, role },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN }
-  );
+  const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+  });
 
   return { accessToken, refreshToken };
 };
@@ -133,7 +137,7 @@ export const setupAdmin = async (req, res) => {
       return res.status(400).json({ error: "email and password are required" });
     }
 
-    // ⛔ Check if user already exists
+    //  Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email },
     });
@@ -190,7 +194,20 @@ export const setupAdmin = async (req, res) => {
 
 export const login = async (req, res) => {
   const { email, password } = req.body;
+
+  if (!email || !password) {
+    return sendError(
+      res,
+      400,
+      "Email and password are required",
+      "VALIDATION_ERROR"
+    );
+  }
   try {
+    // Fetch the active academic year
+    const activeYear = await getActiveAcademicYear();
+    const activeYearId = activeYear?.id;
+
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -207,6 +224,20 @@ export const login = async (req, res) => {
               },
             },
             school: { select: { id: true, name: true, schoolCode: true } },
+            ...(activeYearId && {
+              studentStreams: {
+                where: { academicYearId: activeYearId },
+                select: {
+                  rollNo: true,
+                  stream: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
+                },
+              },
+            }),
           },
         },
         staff: {
@@ -228,10 +259,87 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: "Invalid password" });
     }
 
-    const tokens = generateTokens(user.id, user.role);
+    const tokens = generateTokens(user.id, user.role, user.schoolId);
 
     // Remove sensitive data
     const { password: _, ...userWithoutPassword } = user;
+
+    if (user.role === "PARENT") {
+      const parent = await prisma.parent.findFirst({
+        where: { userId: user.id },
+      });
+
+      if (!parent) {
+        return sendError(
+          res,
+          403,
+          "Parent profile not linked",
+          "PROFILE_NOT_FOUND"
+        );
+      }
+
+      const childrenLinks = await prisma.studentParent.findMany({
+        where: { parentId: parent.id },
+        include: {
+          student: {
+            select: {
+              id: true,
+              name: true,
+              grade: true,
+              classroom: { select: { id: true, name: true, section: true } },
+              school: { select: { id: true, name: true, schoolCode: true } },
+              ...(activeYearId && {
+                studentStreams: {
+                  where: { academicYearId: activeYearId },
+                  select: { rollNo: true, stream: { select: { name: true } } },
+                },
+              }),
+            },
+          },
+        },
+      });
+
+      const children = childrenLinks.map((link) => {
+        const activeStream = link.student.studentStreams?.[0] || null;
+        return {
+          studentId: link.student.id,
+          name: link.student.name,
+          grade: link.student.grade || null,
+          classroom: activeStream?.classroom || link.student.classroom,
+          school: link.student.school,
+          rollNo: activeStream?.rollNo || null,
+          stream: activeStream?.stream || null,
+          isPrimary: link.isPrimary,
+        };
+      });
+
+      // If only one child → auto-select
+      let actingAs = null;
+      if (children.length === 1) {
+        actingAs = children[0];
+        tokens = generateTokens(
+          user.id,
+          user.role,
+          user.schoolId,
+          actingAs.studentId
+        );
+      }
+
+      return sendSuccess(
+        res,
+        200,
+        {
+          user: userWithoutPassword,
+          parent: { id: parent.id, name: parent.name, email: parent.email },
+          children,
+          ...(actingAs && { actingAs }),
+          ...tokens,
+        },
+        children.length === 0
+          ? "Parent login successful - no children linked"
+          : "Parent login successful"
+      );
+    }
 
     res.json({
       message: "Login successful",
@@ -262,7 +370,7 @@ export const refreshToken = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const tokens = generateTokens(user.id, user.role);
+    const tokens = generateTokens(user.id, user.role, user.schoolId);
     res.json(tokens);
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {

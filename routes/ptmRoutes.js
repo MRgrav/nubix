@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate } from "../middlewares/authMiddleware.js";
+import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import {
   requestPTM,
   getMyPTMs,
@@ -8,18 +8,25 @@ import {
   postponePTM,
   rejectPTM,
   getAllPTMs,
+  deletePTM,
 } from "../controllers/ptmController.js";
+
+import { enforceStudentAccess } from "../middlewares/studentAccessMiddleware.js";
 
 const router = express.Router();
 router.use(authenticate);
 
-router.post("/request", requestPTM);
-router.get("/me", getMyPTMs);
-router.get("/", getAllPTMs); // admin/principal only
-router.get("/:id", getPTMById);
+router.post("/request", enforceStudentAccess, requestPTM);
+router.get("/me", enforceStudentAccess, getMyPTMs);
 
-router.put("/:id/approve", approvePTM);
-router.put("/:id/postpone", postponePTM);
-router.put("/:id/reject", rejectPTM);
+// Admin only
+router.get("/", authorize("ADMIN"), getAllPTMs);
+router.delete("/:id", authorize("ADMIN"), deletePTM);
+
+router.get("/:id", enforceStudentAccess, getPTMById);
+
+router.put("/:id/approve", enforceStudentAccess, approvePTM);
+router.put("/:id/postpone", enforceStudentAccess, postponePTM);
+router.put("/:id/reject", enforceStudentAccess, rejectPTM);
 
 export default router;

@@ -1,63 +1,64 @@
-import prisma from '../models/prisma.js';
-import bcrypt from 'bcryptjs';
-import { generateSecurePassword } from './authController.js';
+import prisma from "../models/prisma.js";
+import bcrypt from "bcryptjs";
+import { generateSecurePassword } from "./authController.js";
+import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 
 const OPTIONAL_STRING_FIELDS = [
-  'employeeId',
-  'title',
-  'name',
-  'gender',
-  'employeeType',
-  'role',
-  'designation',
-  'fatherHusbandName',
-  'qualification',
-  'address',
-  'city',
-  'state',
-  'pincode',
-  'location',
-  'aadharNumber',
-  'panNumber',
-  'mobile',
-  'alternateMobile',
-  'email',
-  'alternateEmail',
-  'brokerBranch',
-  'bankName',
-  'bankBranchName',
-  'bankAccountNumber',
-  'ifscCode',
-  'jobOfferLetterUrl',
-  'joiningLetterUrl',
-  'ndaUrl',
-  'experienceLetterUrl',
-  'relievingLetterUrl',
-  'salarySlipUrl',
-  'aadhaarCardUrl',
-  'panCardUrl',
-  'cancelledChequeUrl',
-  'passportUrl',
-  'sscCertificateUrl',
-  'hscCertificateUrl',
-  'graduationCertificateUrl'
+  "employeeId",
+  "title",
+  "name",
+  "gender",
+  "employeeType",
+  "role",
+  "designation",
+  "fatherHusbandName",
+  "qualification",
+  "address",
+  "city",
+  "state",
+  "pincode",
+  "location",
+  "aadharNumber",
+  "panNumber",
+  "mobile",
+  "alternateMobile",
+  "email",
+  "alternateEmail",
+  "brokerBranch",
+  "bankName",
+  "bankBranchName",
+  "bankAccountNumber",
+  "ifscCode",
+  "jobOfferLetterUrl",
+  "joiningLetterUrl",
+  "ndaUrl",
+  "experienceLetterUrl",
+  "relievingLetterUrl",
+  "salarySlipUrl",
+  "aadhaarCardUrl",
+  "panCardUrl",
+  "cancelledChequeUrl",
+  "passportUrl",
+  "sscCertificateUrl",
+  "hscCertificateUrl",
+  "graduationCertificateUrl",
 ];
 
 const sanitizeString = (value) => {
   if (value === undefined) return undefined;
   if (value === null) return null;
-  if (typeof value !== 'string') return value;
+  if (typeof value !== "string") return value;
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
 };
 
 const parseDateField = (value, field) => {
   if (value === undefined) return undefined;
-  if (value === null || value === '') return null;
+  if (value === null || value === "") return null;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     const error = new Error(`Invalid ${field}`);
-    error.code = 'INVALID_DATE';
+    error.code = "INVALID_DATE";
     error.meta = { field };
     throw error;
   }
@@ -73,12 +74,12 @@ const buildStaffPayload = (body) => {
     }
   });
 
-  const dateOfBirth = parseDateField(body.dateOfBirth, 'dateOfBirth');
+  const dateOfBirth = parseDateField(body.dateOfBirth, "dateOfBirth");
   if (dateOfBirth !== undefined) {
     data.dateOfBirth = dateOfBirth;
   }
 
-  const dateOfJoining = parseDateField(body.dateOfJoining, 'dateOfJoining');
+  const dateOfJoining = parseDateField(body.dateOfJoining, "dateOfJoining");
   if (dateOfJoining !== undefined) {
     data.dateOfJoining = dateOfJoining;
   }
@@ -88,138 +89,136 @@ const buildStaffPayload = (body) => {
 
 export const createStaff = async (req, res) => {
   const { schoolId, email } = req.body;
-  
+
   if (!email || !schoolId) {
-    return res.status(400).json({ error: 'Email and School ID are required' });
+    return res.status(400).json({ error: "Email and schoolId are required" });
   }
 
   try {
-    // Check if user already exists
+    // Prevent duplicate email in User table
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already registered in system' });
+      return res
+        .status(400)
+        .json({ error: "Email already registered in system" });
     }
 
-    const existingStaff = await prisma.staff.findUnique({
-      where: { email }
-    });
-
+    // Prevent duplicate staff email
+    const existingStaff = await prisma.staff.findUnique({ where: { email } });
     if (existingStaff) {
-      return res.status(400).json({
-        error: 'Staff member with this email already exists'
-      });
+      return res
+        .status(400)
+        .json({ error: "Staff member with this email already exists" });
     }
 
     const staffData = buildStaffPayload(req.body);
-    
-    // Generate password
-    const password = generateSecurePassword();
-    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate secure temporary password
+    const tempPassword = generateSecurePassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     const result = await prisma.$transaction(async (tx) => {
-      // Create User
+      // 1. Create User account
       const user = await tx.user.create({
         data: {
-          email,
+          email: email.toLowerCase().trim(),
           password: hashedPassword,
-          role: 'STAFF',
-          schoolId: parseInt(schoolId, 10)
-        }
+          role: "STAFF",
+          school: { connect: { id: parseInt(schoolId) } },
+        },
       });
 
-      // Create Staff linked to User
-      staffData.school = { connect: { id: parseInt(schoolId, 10) } };
-      staffData.user = { connect: { id: user.id } };
+      // 2. Create Staff profile and link to User
+      const staffPayload = {
+        ...staffData,
+        email: email.toLowerCase().trim(),
+        school: { connect: { id: parseInt(schoolId) } },
+        user: { connect: { id: user.id } }, // ← CRITICAL: Link userId
+      };
 
       const staff = await tx.staff.create({
-        data: staffData,
+        data: staffPayload,
         include: {
           school: {
-            select: {
-              id: true,
-              name: true,
-              schoolCode: true
-            }
+            select: { id: true, name: true, schoolCode: true },
           },
           user: {
-            select: {
-              id: true,
-              email: true,
-              role: true
-            }
-          }
-        }
+            select: { id: true, email: true, role: true },
+          },
+        },
       });
-      
-      return staff;
+
+      return { staff, tempPassword };
     });
 
-    res.status(201).json({ ...result, generatedPassword: password });
+    res.status(201).json({
+      message: "Staff member created successfully",
+      staff: result.staff,
+      credentials: {
+        email: result.staff.email,
+        temporaryPassword: result.tempPassword,
+        note: "Please share securely. User must change password on first login.",
+      },
+    });
   } catch (err) {
-    console.error(err);
-    if (err.code === 'P2002') {
-      return res.status(400).json({ error: 'Email or employee ID already exists' });
+    console.error("Create staff error:", err);
+    if (err.code === "P2002") {
+      return res
+        .status(400)
+        .json({ error: "Email or unique field already exists" });
     }
-    if (err.code === 'INVALID_DATE') {
-      return res.status(400).json({ error: err.message, field: err.meta?.field });
+    if (err.code === "INVALID_DATE") {
+      return res
+        .status(400)
+        .json({ error: err.message, field: err.meta?.field });
     }
-    res.status(500).json({ error: 'Failed to create staff member' });
+    res.status(500).json({ error: "Failed to create staff member" });
   }
 };
 
 export const getStaff = async (req, res) => {
-  const { page = 1, limit = 10, search, schoolId, role } = req.query;
+  const { schoolId, role } = req.query;
+
   try {
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    let where = {};
+    const where = {};
+    if (schoolId) where.schoolId = parseInt(schoolId);
+    if (role) where.role = role;
 
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { role: { contains: search, mode: 'insensitive' } }
-      ];
-    }
-
-    if (schoolId) {
-      where.schoolId = parseInt(schoolId);
-    }
-
-    if (role) {
-      where.role = role;
-    }
-
-    const [total, staff] = await prisma.$transaction([
-      prisma.staff.count({ where }),
-      prisma.staff.findMany({
-        where,
-        include: {
-          school: {
-            select: {
-              id: true,
-              name: true,
-              schoolCode: true
-            }
-          }
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take: parseInt(limit)
-      })
-    ]);
-
-    res.json({
-      staff,
-      pagination: {
-        total,
-        pages: Math.ceil(total / parseInt(limit)),
-        currentPage: parseInt(page),
-        perPage: parseInt(limit)
-      }
+    const staffList = await prisma.staff.findMany({
+      where,
+      include: {
+        school: { select: { id: true, name: true } },
+        subjects: true,
+        user: { select: { email: true } },
+      },
+      orderBy: { name: "asc" },
     });
+
+    // Always try to attach timetable count for current active year
+    let activeYearId = null;
+    if (schoolId) {
+      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
+      activeYearId = activeYear?.id;
+    }
+
+    const staffWithCount = activeYearId
+      ? await Promise.all(
+          staffList.map(async (staff) => {
+            const count = await prisma.timetableSlot.count({
+              where: {
+                teacherId: staff.id,
+                academicYearId: activeYearId,
+              },
+            });
+            return { ...staff, timetablePeriods: count };
+          })
+        )
+      : staffList;
+
+    res.json({ staff: staffWithCount });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch staff' });
+    res.status(500).json({ error: "Failed to fetch staff" });
   }
 };
 
@@ -229,69 +228,87 @@ export const getStaffMember = async (req, res) => {
     const staff = await prisma.staff.findUnique({
       where: { id: parseInt(id) },
       include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-            schoolCode: true
-          }
-        },
+        school: true,
+        subjects: true,
         user: {
           select: {
+            id: true,
             email: true,
-            role: true
-          }
-        }
-      }
+            role: true,
+          },
+        },
+      },
     });
 
     if (!staff) {
-      return res.status(404).json({ error: 'Staff member not found' });
+      return res.status(404).json({ error: "Staff member not found" });
     }
 
-    res.json(staff);
+    const activeYear = await getActiveAcademicYear(staff.schoolId);
+
+    const timetableSlots = activeYear
+      ? await prisma.timetableSlot.findMany({
+          where: {
+            teacherId: staff.id,
+            academicYearId: activeYear.id,
+          },
+          include: {
+            classroom: { select: { name: true, section: true } },
+            subject: true,
+            academicYear: { select: { label: true } },
+          },
+          orderBy: [{ day: "asc" }, { startMinutes: "asc" }],
+        })
+      : [];
+
+    res.json({
+      staff,
+      currentAcademicYear: activeYear ? activeYear.label : null,
+      timetableSlots,
+      totalPeriods: timetableSlots.length,
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch staff member' });
+    res.status(500).json({ error: "Failed to fetch staff member" });
   }
 };
 
 export const updateStaffMember = async (req, res) => {
   const { id } = req.params;
+
   try {
     const staffData = buildStaffPayload(req.body);
 
     if (req.body.schoolId) {
-      staffData.school = { connect: { id: parseInt(req.body.schoolId, 10) } };
+      staffData.school = { connect: { id: parseInt(req.body.schoolId) } };
     }
 
     const staff = await prisma.staff.update({
-      where: { id: parseInt(id, 10) },
+      where: { id: parseInt(id) },
       data: staffData,
       include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-            schoolCode: true
-          }
-        }
-      }
+        school: { select: { id: true, name: true, schoolCode: true } },
+        user: { select: { email: true } },
+      },
     });
 
-    res.json(staff);
+    res.json({ message: "Staff updated successfully", staff });
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2025') {
-      return res.status(404).json({ error: 'Staff member not found' });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Staff member not found" });
     }
-    if (err.code === 'P2002') {
-      return res.status(400).json({ error: 'Email or employee ID already exists' });
+    if (err.code === "P2002") {
+      return res
+        .status(400)
+        .json({ error: "Email or unique field already in use" });
     }
-    if (err.code === 'INVALID_DATE') {
-      return res.status(400).json({ error: err.message, field: err.meta?.field });
+    if (err.code === "INVALID_DATE") {
+      return res
+        .status(400)
+        .json({ error: err.message, field: err.meta?.field });
     }
-    res.status(500).json({ error: 'Failed to update staff member' });
+    res.status(500).json({ error: "Failed to update staff member" });
   }
 };
 
@@ -299,15 +316,15 @@ export const deleteStaffMember = async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.staff.delete({
-      where: { id: parseInt(id) }
+      where: { id: parseInt(id) },
     });
 
-    res.json({ message: 'Staff member deleted successfully' });
+    res.json({ message: "Staff member deleted successfully" });
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2025') {
-      return res.status(404).json({ error: 'Staff member not found' });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Staff member not found" });
     }
-    res.status(500).json({ error: 'Failed to delete staff member' });
+    res.status(500).json({ error: "Failed to delete staff member" });
   }
 };

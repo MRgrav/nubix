@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "PTMRole" ADD VALUE 'PARENT';

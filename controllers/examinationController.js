@@ -1,13 +1,25 @@
-import prisma from '../models/prisma.js';
+import prisma from "../models/prisma.js";
+import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 
-// Create a new examination
 export const createExamination = async (req, res) => {
+  const {
+    title,
+    description,
+    subject,
+    examDate,
+    duration,
+    totalMarks,
+    schoolId,
+    classroomId,
+    academicYearId,
+  } = req.body;
   try {
-    const { title, description, subject, examDate, duration, totalMarks, schoolId, classroomId } = req.body;
-
-    // Validate required fields
-    if (!title || !subject || !examDate || !duration || !totalMarks || !schoolId || !classroomId) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    let resolvedAcademicYearId = academicYearId;
+    if (!resolvedAcademicYearId) {
+      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
+      if (!activeYear)
+        return res.status(400).json({ error: "No active academic year" });
+      resolvedAcademicYearId = activeYear.id;
     }
 
     const examination = await prisma.examination.create({
@@ -16,299 +28,216 @@ export const createExamination = async (req, res) => {
         description,
         subject,
         examDate: new Date(examDate),
-        duration: parseInt(duration),
-        totalMarks: parseFloat(totalMarks),
+        duration,
+        totalMarks,
         school: { connect: { id: parseInt(schoolId) } },
-        classroom: { connect: { id: parseInt(classroomId) } }
+        classroom: { connect: { id: parseInt(classroomId) } },
+        academicYear: { connect: { id: parseInt(resolvedAcademicYearId) } },
       },
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        classroom: { select: { id: true, name: true } }
-      }
+      include: { school: true, classroom: true, academicYear: true },
     });
-
     res.status(201).json(examination);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create examination' });
+    res.status(500).json({ error: "Failed to create examination" });
   }
 };
 
-// Get all examinations
 export const getExaminations = async (req, res) => {
+  const { schoolId, classroomId, academicYearId } = req.query;
   try {
-    const { schoolId, classroomId, status } = req.query;
+    let resolvedAcademicYearId = academicYearId;
+    if (!resolvedAcademicYearId && schoolId) {
+      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
+      resolvedAcademicYearId = activeYear?.id;
+    }
 
-    const where = {};
+    const where = {
+      ...(resolvedAcademicYearId && {
+        academicYearId: parseInt(resolvedAcademicYearId),
+      }),
+    };
     if (schoolId) where.schoolId = parseInt(schoolId);
     if (classroomId) where.classroomId = parseInt(classroomId);
-    if (status) where.status = status;
 
     const examinations = await prisma.examination.findMany({
       where,
-      orderBy: { examDate: 'asc' },
       include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        classroom: { select: { id: true, name: true } },
-        results: { select: { id: true, studentId: true, marksObtained: true } }
-      }
+        school: true,
+        classroom: true,
+        academicYear: true,
+        results: true,
+      },
+      orderBy: { examDate: "asc" },
     });
-
     res.json({ examinations });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch examinations' });
+    res.status(500).json({ error: "Failed to fetch examinations" });
   }
 };
 
-// Get single examination with results
 export const getExamination = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
-
     const examination = await prisma.examination.findUnique({
       where: { id: parseInt(id) },
       include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        classroom: { select: { id: true, name: true } },
-        results: {
-          include: {
-            student: { select: { id: true, name: true, email: true } }
-          }
-        }
-      }
+        school: true,
+        classroom: true,
+        results: { include: { student: true } },
+        academicYear: true,
+      },
     });
-
-    if (!examination) {
-      return res.status(404).json({ error: 'Examination not found' });
-    }
-
+    if (!examination)
+      return res.status(404).json({ error: "Examination not found" });
     res.json(examination);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch examination' });
+    res.status(500).json({ error: "Failed to fetch examination" });
   }
 };
 
-// Update examination
 export const updateExamination = async (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
   try {
-    const { id } = req.params;
-    const { title, description, subject, examDate, duration, totalMarks, status } = req.body;
-
-    const data = {};
-    if (title !== undefined) data.title = title;
-    if (description !== undefined) data.description = description;
-    if (subject !== undefined) data.subject = subject;
-    if (examDate !== undefined) data.examDate = new Date(examDate);
-    if (duration !== undefined) data.duration = parseInt(duration);
-    if (totalMarks !== undefined) data.totalMarks = parseFloat(totalMarks);
-    if (status !== undefined) data.status = status;
+    if (updates.examDate) updates.examDate = new Date(updates.examDate);
+    if (updates.academicYearId)
+      updates.academicYear = {
+        connect: { id: parseInt(updates.academicYearId) },
+      };
+    if (updates.schoolId)
+      updates.school = { connect: { id: parseInt(updates.schoolId) } };
+    if (updates.classroomId)
+      updates.classroom = { connect: { id: parseInt(updates.classroomId) } };
 
     const examination = await prisma.examination.update({
       where: { id: parseInt(id) },
-      data,
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        classroom: { select: { id: true, name: true } },
-        results: { select: { id: true, studentId: true, marksObtained: true } }
-      }
+      data: updates,
+      include: { academicYear: true },
     });
-
     res.json(examination);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to update examination' });
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "Examination not found" });
+    res.status(500).json({ error: "Failed to update examination" });
   }
 };
 
-// Delete examination
 export const deleteExamination = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
-
-    // Deleting the examination will cascade delete results
-    await prisma.examination.delete({
-      where: { id: parseInt(id) }
-    });
-
-    res.json({ message: 'Examination deleted successfully' });
+    await prisma.examination.delete({ where: { id: parseInt(id) } });
+    res.json({ message: "Examination deleted" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to delete examination' });
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "Examination not found" });
+    res.status(500).json({ error: "Failed to delete examination" });
   }
 };
 
-// Add or update examination result for a student
 export const addExaminationResult = async (req, res) => {
+  const { examinationId, studentId, marksObtained, remarks, academicYearId } =
+    req.body;
   try {
-    const { examinationId, studentId, marksObtained, remarks } = req.body;
-
-    if (!examinationId || !studentId || marksObtained === undefined) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    let resolvedAcademicYearId = academicYearId;
+    if (!resolvedAcademicYearId) {
+      const exam = await prisma.examination.findUnique({
+        where: { id: parseInt(examinationId) },
+      });
+      resolvedAcademicYearId = exam.academicYearId;
     }
 
-    // Check if result already exists
-    const existingResult = await prisma.examinationResult.findUnique({
-      where: {
-        examinationId_studentId: {
-          examinationId: parseInt(examinationId),
-          studentId: parseInt(studentId)
-        }
-      }
+    const result = await prisma.examinationResult.create({
+      data: {
+        marksObtained,
+        remarks,
+        examination: { connect: { id: parseInt(examinationId) } },
+        student: { connect: { id: parseInt(studentId) } },
+        academicYear: { connect: { id: parseInt(resolvedAcademicYearId) } },
+      },
+      include: { examination: true, student: true, academicYear: true },
     });
-
-    let result;
-    if (existingResult) {
-      // Update existing result
-      result = await prisma.examinationResult.update({
-        where: {
-          examinationId_studentId: {
-            examinationId: parseInt(examinationId),
-            studentId: parseInt(studentId)
-          }
-        },
-        data: {
-          marksObtained: parseFloat(marksObtained),
-          remarks
-        },
-        include: {
-          student: { select: { id: true, name: true, email: true } },
-          examination: { select: { id: true, title: true, totalMarks: true } }
-        }
-      });
-    } else {
-      // Create new result
-      result = await prisma.examinationResult.create({
-        data: {
-          marksObtained: parseFloat(marksObtained),
-          remarks,
-          examination: { connect: { id: parseInt(examinationId) } },
-          student: { connect: { id: parseInt(studentId) } }
-        },
-        include: {
-          student: { select: { id: true, name: true, email: true } },
-          examination: { select: { id: true, title: true, totalMarks: true } }
-        }
-      });
-    }
-
     res.status(201).json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to add examination result' });
+    if (err.code === "P2002")
+      return res.status(400).json({ error: "Result already exists" });
+    res.status(500).json({ error: "Failed to add result" });
   }
 };
 
-// Get examination results for a student
 export const getStudentExaminationResults = async (req, res) => {
+  const { studentId } = req.params;
+  const { academicYearId } = req.query;
   try {
-    const { studentId } = req.params;
-    const { examinationId } = req.query;
-
-    const where = { studentId: parseInt(studentId) };
-    if (examinationId) where.examinationId = parseInt(examinationId);
+    let resolvedAcademicYearId = academicYearId;
+    if (!resolvedAcademicYearId) {
+      const activeYear = await getActiveAcademicYear();
+      resolvedAcademicYearId = activeYear?.id;
+    }
 
     const results = await prisma.examinationResult.findMany({
-      where,
-      include: {
-        examination: {
-          select: {
-            id: true,
-            title: true,
-            subject: true,
-            examDate: true,
-            totalMarks: true,
-            classroom: { select: { id: true, name: true } }
-          }
-        }
+      where: {
+        studentId: parseInt(studentId),
+        ...(resolvedAcademicYearId && {
+          academicYearId: parseInt(resolvedAcademicYearId),
+        }),
       },
-      orderBy: { createdAt: 'desc' }
+      include: { examination: true, student: true, academicYear: true },
+      orderBy: { createdAt: "desc" },
     });
-
     res.json({ results });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch examination results' });
+    res.status(500).json({ error: "Failed to fetch student results" });
   }
 };
 
-// Get examination result details
 export const getExaminationResult = async (req, res) => {
+  const { resultId } = req.params;
   try {
-    const { resultId } = req.params;
-
     const result = await prisma.examinationResult.findUnique({
       where: { id: parseInt(resultId) },
-      include: {
-        student: { select: { id: true, name: true, email: true, classroom: { select: { id: true, name: true } } } },
-        examination: { select: { id: true, title: true, subject: true, examDate: true, totalMarks: true } }
-      }
+      include: { examination: true, student: true },
     });
-
-    if (!result) {
-      return res.status(404).json({ error: 'Examination result not found' });
-    }
-
+    if (!result) return res.status(404).json({ error: "Result not found" });
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch examination result' });
+    res.status(500).json({ error: "Failed to fetch result" });
   }
 };
 
-// Delete examination result
 export const deleteExaminationResult = async (req, res) => {
+  const { resultId } = req.params;
   try {
-    const { resultId } = req.params;
-
     await prisma.examinationResult.delete({
-      where: { id: parseInt(resultId) }
+      where: { id: parseInt(resultId) },
     });
-
-    res.json({ message: 'Examination result deleted successfully' });
+    res.json({ message: "Result deleted" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to delete examination result' });
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "Result not found" });
+    res.status(500).json({ error: "Failed to delete result" });
   }
 };
 
-// Get examination statistics
 export const getExaminationStats = async (req, res) => {
+  const { examinationId } = req.params;
   try {
-    const { examinationId } = req.params;
-
-    const results = await prisma.examinationResult.findMany({
-      where: { examinationId: parseInt(examinationId) }
+    const stats = await prisma.examinationResult.groupBy({
+      by: ["marksObtained"],
+      where: { examinationId: parseInt(examinationId) },
+      _count: { marksObtained: true },
     });
-
-    if (results.length === 0) {
-      return res.json({
-        totalStudents: 0,
-        averageMarks: 0,
-        highestMarks: 0,
-        lowestMarks: 0,
-        passedCount: 0
-      });
-    }
-
-    const marks = results.map(r => r.marksObtained);
-    const totalMarks = (await prisma.examination.findUnique({
-      where: { id: parseInt(examinationId) }
-    })).totalMarks;
-    const passMarks = totalMarks / 2; // 50% is pass
-
-    const stats = {
-      totalStudents: results.length,
-      averageMarks: (marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(2),
-      highestMarks: Math.max(...marks),
-      lowestMarks: Math.min(...marks),
-      passedCount: results.filter(r => r.marksObtained >= passMarks).length
-    };
-
-    res.json(stats);
+    res.json({ stats });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch examination statistics' });
+    res.status(500).json({ error: "Failed to fetch stats" });
   }
 };

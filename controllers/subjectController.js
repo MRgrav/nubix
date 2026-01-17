@@ -1,137 +1,152 @@
-import prisma from '../models/prisma.js';
+import prisma from "../models/prisma.js";
 
-// Basic CRUD for Subject (now optionally linked to a School and Teacher)
 export const createSubject = async (req, res) => {
+  const { name, code, description, schoolId } = req.body;
+
+  // Basic validation
+  if (!name?.trim() || !code?.trim()) {
+    return res.status(400).json({ error: "name and code are required" });
+  }
+
   try {
-    const { name, code, description, schoolId, teacherId, teacherName } = req.body;
-
-    // Check if subject code already exists
-    const existing = await prisma.subject.findUnique({ where: { code } });
-    if (existing) {
-      return res.status(400).json({ error: 'Subject code already exists' });
-    }
-
-    const data = { name, code, description };
-
-    // Optional single teacher name field
-    if (teacherName) data.teacherName = teacherName;
-
-    // Connect multiple teachers if provided
-    if (teacherId) {
-      if (Array.isArray(teacherId)) {
-        data.teachers = {
-          connect: teacherId.map(id => ({ id: parseInt(id, 10) }))
-        };
-      } else {
-        data.teachers = { connect: { id: parseInt(teacherId, 10) } };
-      }
-    }
-
-    // Connect school if schoolId exists in DB
+    let connectSchool = undefined;
     if (schoolId) {
-      const numericSchoolId = parseInt(schoolId, 10);
-      const schoolExists = await prisma.school.findUnique({ where: { id: numericSchoolId } });
-      if (schoolExists) {
-        data.school = { connect: { id: numericSchoolId } };
+      const schoolExists = await prisma.school.findUnique({
+        where: { id: parseInt(schoolId) },
+      });
+      if (!schoolExists) {
+        return res.status(404).json({ error: "School not found" });
       }
+      connectSchool = { connect: { id: parseInt(schoolId) } };
+    } else if (req.user.schoolId) {
+      // Optionally enforce from user context if no schoolId provided
+      connectSchool = { connect: { id: req.user.schoolId } };
     }
-
-    // Create the subject
     const subject = await prisma.subject.create({
-      data,
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        teachers: { select: { id: true, name: true, email: true } }
-      }
+      data: {
+        name: name.trim(),
+        code: code.trim(),
+        description: description?.trim(),
+        school: connectSchool,
+      },
     });
-
     res.status(201).json(subject);
-
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create subject' });
+    if (err.code === "P2002") {
+      return res.status(400).json({ error: "Code already exists" });
+    }
+    if (err.code === "P2025") {
+      return res
+        .status(404)
+        .json({ error: "Invalid relation (e.g., school not found)" });
+    }
+    res.status(500).json({ error: "Failed to create subject" });
   }
 };
 
-
 export const getSubjects = async (req, res) => {
+  const { schoolId, page = 1, limit = 20 } = req.query;
+
   try {
-    const subjects = await prisma.subject.findMany({
-      orderBy: { name: 'asc' },
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        teachers: { select: { id: true, name: true, email: true } }
-      }
+    const where = schoolId ? { schoolId: parseInt(schoolId) } : {};
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const [total, subjects] = await prisma.$transaction([
+      prisma.subject.count({ where }),
+      prisma.subject.findMany({
+        where,
+        // include: { school: true, teachers: true, students: true },
+        orderBy: { name: "asc" },
+        skip,
+        take,
+      }),
+    ]);
+
+    res.json({
+      subjects,
+      pagination: {
+        total,
+        pages: Math.ceil(total / take),
+        currentPage: parseInt(page),
+        perPage: take,
+      },
     });
-    res.json({ subjects });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch subjects' });
+    res.status(500).json({ error: "Failed to fetch subjects" });
   }
 };
 
 export const getSubject = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
     const subject = await prisma.subject.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        teacher: { select: { id: true, name: true, email: true } }
-      }
+      // include: {
+      //   school: true,
+      //   teachers: true,
+      //   students: true,
+      //   timetableSlots: true,
+      // },
     });
-    if (!subject) return res.status(404).json({ error: 'Subject not found' });
+    if (!subject) return res.status(404).json({ error: "Subject not found" });
     res.json(subject);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch subject' });
+    res.status(500).json({ error: "Failed to fetch subject" });
   }
 };
 
 export const updateSubject = async (req, res) => {
+  const { id } = req.params;
+  const { name, code, description, schoolId } = req.body;
   try {
-    const { id } = req.params;
-    const { name, code, description, schoolId, teacherId, teacherName } = req.body;
-    const data = { name, code, description };
-
-    if (teacherName !== undefined) {
-      data.teacherName = teacherName;
-    }
-
-    if (teacherId === null) {
-      data.teacher = { disconnect: true };
-      data.teacherId = null;
-    } else if (teacherId !== undefined) {
-      data.teacher = { connect: { id: parseInt(teacherId, 10) } };
-    }
-
-    if (schoolId === null) {
-      data.school = { disconnect: true };
-    } else if (schoolId !== undefined) {
+    const data = {};
+    if (name?.trim()) data.name = name.trim();
+    if (code?.trim()) data.code = code.trim();
+    if (description !== undefined) data.description = description?.trim();
+    if (schoolId) {
+      const schoolExists = await prisma.school.findUnique({
+        where: { id: parseInt(schoolId) },
+      });
+      if (!schoolExists) {
+        return res.status(404).json({ error: "School not found" });
+      }
       data.school = { connect: { id: parseInt(schoolId) } };
     }
 
     const subject = await prisma.subject.update({
       where: { id: parseInt(id) },
       data,
-      include: { school: { select: { id: true, name: true, schoolCode: true } } }
+      // include: { school: true, teachers: true, students: true },
     });
     res.json(subject);
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2025') return res.status(404).json({ error: 'Subject not found' });
-    res.status(500).json({ error: 'Failed to update subject' });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Subject not found" });
+    }
+    if (err.code === "P2002") {
+      return res.status(400).json({ error: "Code already exists" });
+    }
+    res.status(500).json({ error: "Failed to update subject" });
   }
 };
 
 export const deleteSubject = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
     await prisma.subject.delete({ where: { id: parseInt(id) } });
-    res.json({ message: 'Subject deleted' });
+    res.json({ message: "Subject deleted" });
   } catch (err) {
     console.error(err);
-    if (err.code === 'P2025') return res.status(404).json({ error: 'Subject not found' });
-    res.status(500).json({ error: 'Failed to delete subject' });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Subject not found" });
+    }
+    res.status(500).json({ error: "Failed to delete subject" });
   }
 };
+
+
