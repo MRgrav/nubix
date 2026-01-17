@@ -200,7 +200,7 @@ export const login = async (req, res) => {
       res,
       400,
       "Email and password are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
   try {
@@ -259,7 +259,7 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: "Invalid password" });
     }
 
-    const tokens = generateTokens(user.id, user.role, user.schoolId);
+    let tokens = generateTokens(user.id, user.role, user.schoolId);
 
     // Remove sensitive data
     const { password: _, ...userWithoutPassword } = user;
@@ -274,7 +274,7 @@ export const login = async (req, res) => {
           res,
           403,
           "Parent profile not linked",
-          "PROFILE_NOT_FOUND"
+          "PROFILE_NOT_FOUND",
         );
       }
 
@@ -321,7 +321,7 @@ export const login = async (req, res) => {
           user.id,
           user.role,
           user.schoolId,
-          actingAs.studentId
+          actingAs.studentId,
         );
       }
 
@@ -337,7 +337,7 @@ export const login = async (req, res) => {
         },
         children.length === 0
           ? "Parent login successful - no children linked"
-          : "Parent login successful"
+          : "Parent login successful",
       );
     }
 
