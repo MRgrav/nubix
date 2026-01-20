@@ -17,7 +17,12 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const generateTokens = (userId, role, schoolId, actingAsStudentId = null) => {
+export const generateTokens = (
+  userId,
+  role,
+  schoolId,
+  actingAsStudentId = null,
+) => {
   const payload = { userId, role, schoolId };
   if (actingAsStudentId) payload.actingAsStudentId = actingAsStudentId;
 
@@ -370,7 +375,15 @@ export const refreshToken = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const tokens = generateTokens(user.id, user.role, user.schoolId);
+    // Preserve actingAsStudentId if present in decoded payload
+    const actingAsStudentId = decoded.actingAsStudentId || null;
+
+    const tokens = generateTokens(
+      user.id,
+      user.role,
+      user.schoolId,
+      actingAsStudentId,
+    );
     res.json(tokens);
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
