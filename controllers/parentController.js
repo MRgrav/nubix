@@ -4,6 +4,7 @@ import { generateSecurePassword } from "../controllers/authController.js";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import jwt from "jsonwebtoken";
+import { generateTokens } from "../controllers/authController.js";
 
 export const createParent = async (req, res) => {
   if (req.user.role !== "ADMIN") {
@@ -11,7 +12,7 @@ export const createParent = async (req, res) => {
       res,
       403,
       "Only administrators can create parents",
-      "FORBIDDEN"
+      "FORBIDDEN",
     );
   }
 
@@ -30,7 +31,7 @@ export const createParent = async (req, res) => {
       res,
       400,
       "type, name, and email are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
 
@@ -82,7 +83,7 @@ export const createParent = async (req, res) => {
         temporaryPassword: result.tempPassword,
         ...(result.link && { link: result.link }),
       },
-      "Parent created successfully"
+      "Parent created successfully",
     );
   } catch (err) {
     console.error(err);
@@ -197,16 +198,30 @@ export const selectChild = async (req, res) => {
   }
 
   try {
+    // Fetch parentId using userId since req.user.parentId is not set
+    const parent = await prisma.parent.findUnique({
+      where: { userId: req.user.userId },
+      select: { id: true },
+    });
+
+    if (!parent) {
+      console.warn(
+        "[selectChild] Parent profile not found for user",
+        req.user.userId,
+      );
+      return sendError(res, 404, "Parent profile not found", "NOT_FOUND");
+    }
+
+    const parentId = parent.id;
+    console.log("Fetched Parent Id:", parentId);
+
     console.log("[selectChild] Checking parent-student link", {
       parentUserId: req.user.userId,
       studentId: parseInt(studentId),
     });
 
-    const link = await prisma.studentParent.findFirst({
-      where: {
-        parent: { userId: req.user.userId },
-        studentId: parseInt(studentId),
-      },
+    const link = await prisma.studentParent.findUnique({
+      where: { studentId_parentId: { studentId: Number(studentId), parentId } },
     });
 
     console.log("[selectChild] Link lookup result:", link);
@@ -219,27 +234,18 @@ export const selectChild = async (req, res) => {
       return sendError(res, 403, "Not linked to this student", "FORBIDDEN");
     }
 
-    console.log("[selectChild] Generating new JWT with actingAsStudentId");
+    console.log("[selectChild] Generating new tokens with actingAsStudentId");
 
-    const newToken = jwt.sign(
-      {
-        userId: req.user.userId,
-        role: req.user.role,
-        schoolId: req.user.schoolId || null,
-        actingAsStudentId: parseInt(studentId),
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "3h" }
+    const tokens = generateTokens(
+      req.user.userId,
+      req.user.role,
+      req.user.schoolId || null,
+      parseInt(studentId),
     );
 
-    console.log("[selectChild] Token generated successfully");
+    console.log("[selectChild] Tokens generated successfully");
 
-    return sendSuccess(
-      res,
-      200,
-      { token: newToken },
-      "Now acting as selected child"
-    );
+    return sendSuccess(res, 200, tokens, "Now acting as selected child");
   } catch (err) {
     console.error("[selectChild] Unexpected error:", err);
     return sendError(res, 500, "Failed to select child", "INTERNAL_ERROR");
@@ -268,7 +274,7 @@ export const updateParent = async (req, res) => {
         res,
         403,
         "You can only update your own profile",
-        "FORBIDDEN"
+        "FORBIDDEN",
       );
     }
 
@@ -300,7 +306,7 @@ export const deleteParent = async (req, res) => {
       res,
       403,
       "Only administrators can delete parents",
-      "FORBIDDEN"
+      "FORBIDDEN",
     );
   }
 
