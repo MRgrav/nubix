@@ -17,10 +17,7 @@ const createStudentSchema = z
       .refine(
         (val) => {
           if (!val) return true;
-          return (
-            !isNaN(Date.parse(val)) || // ISO
-            /^\d{2}\/\d{2}\/\d{4}$/.test(val) // DD/MM/YYYY
-          );
+          return !isNaN(Date.parse(val)) || /^\d{2}\/\d{2}\/\d{4}$/.test(val);
         },
         { message: "Invalid date format (ISO or DD/MM/YYYY)" },
       ),
@@ -219,14 +216,76 @@ export const createStudent = async (req, res) => {
         }
 
         // Generate unique rollNo
-        const finalRollNo =
-          rollNo ||
-          (await generateRollNo(tx, {
-            academicYearId: ayId,
-            classroomId: parseInt(classroomId),
-            streamId: streamId ? parseInt(streamId) : null,
-            schoolId: parseInt(schoolId),
-          }));
+        // const finalRollNo =
+        //   rollNo ||
+        //   (await generateRollNo(tx, {
+        //     academicYearId: ayId,
+        //     classroomId: parseInt(classroomId),
+        //     streamId: streamId ? parseInt(streamId) : null,
+        //     schoolId: parseInt(schoolId),
+        //   }));
+
+        // Generate roll number if not provided
+        let finalRollNo = rollNo;
+
+        if (!finalRollNo && classroomId) {
+          let attempts = 0;
+          const maxAttempts = 10; // increased safety margin
+
+          while (attempts < maxAttempts) {
+            // Ask generator for base number
+            let candidate = await generateRollNo(tx, {
+              academicYearId: ayId,
+              classroomId: parseInt(classroomId),
+              streamId: streamId ? parseInt(streamId) : null,
+              schoolId: parseInt(schoolId),
+            });
+
+            // On retries: force increment by adding attempt offset
+            if (attempts > 0) {
+              // Extract numeric part at the end (assumes format like XXX-001 or 001)
+              const match = candidate.match(/(\d+)$/);
+              let baseSeq = match ? parseInt(match[1], 10) : 1;
+
+              // Force next number
+              const forcedSeq = baseSeq + attempts;
+              candidate = candidate.replace(
+                /\d+$/,
+                forcedSeq.toString().padStart(match ? match[1].length : 3, "0"),
+              );
+            }
+
+            // Check if this candidate already exists
+            const exists = await tx.studentStream.findFirst({
+              where: {
+                academicYearId: ayId,
+                classroomId: parseInt(classroomId),
+                rollNo: candidate,
+              },
+              select: { id: true },
+            });
+
+            if (!exists) {
+              finalRollNo = candidate;
+              break;
+            }
+
+            attempts++;
+            console.warn(
+              `RollNo conflict: ${candidate} already used → retry ${attempts}/${maxAttempts}`,
+            );
+          }
+
+          if (!finalRollNo) {
+            // Ultimate fallback: timestamp + random (guaranteed unique)
+            const timestamp = Date.now().toString().slice(-6);
+            const rand = Math.random().toString(36).slice(-3);
+            finalRollNo = `ROLL-${timestamp}-${rand}`;
+            console.warn(
+              `Max retries reached – using fallback rollNo: ${finalRollNo}`,
+            );
+          }
+        }
 
         // Create StudentStream
         enrollment = await tx.studentStream.create({
