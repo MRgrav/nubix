@@ -51,7 +51,7 @@ export const requestPTM = async (req, res) => {
         res,
         403,
         "Please select a child first",
-        "CHILD_NOT_SELECTED"
+        "CHILD_NOT_SELECTED",
       );
     }
     if (parseInt(studentId) !== actingStudentId) {
@@ -59,7 +59,7 @@ export const requestPTM = async (req, res) => {
         res,
         403,
         "You can only request PTM for your selected child",
-        "FORBIDDEN"
+        "FORBIDDEN",
       );
     }
   }
@@ -75,7 +75,7 @@ export const requestPTM = async (req, res) => {
       res,
       400,
       "studentId, requestedToId, requestedDate, requestedTime, and purpose are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
 
@@ -102,7 +102,7 @@ export const requestPTM = async (req, res) => {
           res,
           400,
           "PTM requests must be between different roles (student/parent ↔ staff)",
-          "VALIDATION_ERROR"
+          "VALIDATION_ERROR",
         );
       }
 
@@ -115,7 +115,7 @@ export const requestPTM = async (req, res) => {
           res,
           400,
           "Students and Parents can only request PTM to staff",
-          "VALIDATION_ERROR"
+          "VALIDATION_ERROR",
         );
       }
 
@@ -125,7 +125,7 @@ export const requestPTM = async (req, res) => {
           res,
           400,
           "Staff can only request PTM to students",
-          "VALIDATION_ERROR"
+          "VALIDATION_ERROR",
         );
       }
     }
@@ -138,7 +138,7 @@ export const requestPTM = async (req, res) => {
           res,
           400,
           "No active academic year found",
-          "ACADEMIC_YEAR_NOT_FOUND"
+          "ACADEMIC_YEAR_NOT_FOUND",
         );
       }
       resolvedAcademicYearId = activeYear.id;
@@ -193,7 +193,7 @@ export const requestPTM = async (req, res) => {
       res,
       201,
       ptmRequest,
-      "PTM request created successfully"
+      "PTM request created successfully",
     );
   } catch (err) {
     console.error("Request PTM error:", err);
@@ -252,7 +252,7 @@ export const getMyPTMs = async (req, res) => {
           res,
           403,
           "Please select a child first",
-          "CHILD_NOT_SELECTED"
+          "CHILD_NOT_SELECTED",
         );
       }
 
@@ -425,7 +425,7 @@ export const getPTMById = async (req, res) => {
           res,
           403,
           "You can only view PTMs for your selected child",
-          "FORBIDDEN"
+          "FORBIDDEN",
         );
       }
     }
@@ -490,7 +490,7 @@ export const approvePTM = async (req, res) => {
             res,
             403,
             "Please select a child first",
-            "CHILD_NOT_SELECTED"
+            "CHILD_NOT_SELECTED",
           );
         }
 
@@ -503,7 +503,7 @@ export const approvePTM = async (req, res) => {
           res,
           403,
           "Only the recipient, parent of the selected child, or admin can approve this PTM",
-          "FORBIDDEN"
+          "FORBIDDEN",
         );
       }
     }
@@ -532,7 +532,7 @@ export const approvePTM = async (req, res) => {
       res,
       200,
       formatPTMActionResponse(ptm),
-      "PTM approved successfully"
+      "PTM approved successfully",
     );
   } catch (err) {
     console.error("Approve PTM error:", err);
@@ -550,7 +550,7 @@ export const postponePTM = async (req, res) => {
         res,
         400,
         "suggestedDate and suggestedTime are required",
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
     }
 
@@ -597,7 +597,7 @@ export const postponePTM = async (req, res) => {
             res,
             403,
             "Please select a child first",
-            "CHILD_NOT_SELECTED"
+            "CHILD_NOT_SELECTED",
           );
         }
 
@@ -610,7 +610,7 @@ export const postponePTM = async (req, res) => {
           res,
           403,
           "Only the recipient, parent of the selected child, or admin can approve this PTM",
-          "FORBIDDEN"
+          "FORBIDDEN",
         );
       }
     }
@@ -641,7 +641,7 @@ export const postponePTM = async (req, res) => {
       res,
       200,
       formatPTMActionResponse(ptm),
-      "PTM postponed successfully"
+      "PTM postponed successfully",
     );
   } catch (err) {
     console.error("Postpone PTM error:", err);
@@ -697,7 +697,7 @@ export const rejectPTM = async (req, res) => {
             res,
             403,
             "Please select a child first",
-            "CHILD_NOT_SELECTED"
+            "CHILD_NOT_SELECTED",
           );
         }
 
@@ -710,7 +710,7 @@ export const rejectPTM = async (req, res) => {
           res,
           403,
           "Only the recipient, parent of the selected child, or admin can approve this PTM",
-          "FORBIDDEN"
+          "FORBIDDEN",
         );
       }
     }
@@ -739,7 +739,7 @@ export const rejectPTM = async (req, res) => {
       res,
       200,
       formatPTMActionResponse(ptm),
-      "PTM rejected successfully"
+      "PTM rejected successfully",
     );
   } catch (err) {
     console.error("Reject PTM error:", err);
@@ -879,5 +879,280 @@ export const deletePTM = async (req, res) => {
     if (err.code === "P2025")
       return sendError(res, 404, "PTM not found", "NOT_FOUND");
     return sendError(res, 500, "Failed to delete PTM", "INTERNAL_ERROR");
+  }
+};
+
+// For Teachers → Search Students
+export const searchStudentsForPTM = async (req, res) => {
+  const {
+    search = "", // name, rollNo, etc.
+    page = 1,
+    limit = 15,
+    classroomId, // optional: filter by specific classroom
+    section, // optional: filter by section (A, B, etc.)
+    streamId, // optional: filter by stream (for 11/12)
+    academicYearId, // optional: defaults to active if not provided
+  } = req.query;
+
+  // Optional: Require minimum search length (uncomment if needed)
+  // if (search.trim().length < 2) {
+  //   return res.status(400).json({ error: "Search query must be at least 2 characters" });
+  // }
+
+  try {
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(5, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build dynamic where clause
+    const where = {};
+
+    // Text search on name or rollNo (via studentStreams)
+    if (search.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: "insensitive" } },
+        {
+          studentStreams: {
+            some: { rollNo: { contains: search.trim() } },
+          },
+        },
+      ];
+    }
+
+    // Scope to teacher's current classes (recommended for privacy)
+    if (req.user.role === "TEACHER" || req.user.role === "STAFF") {
+      const teacherId = req.user.teacherId; // Must be attached in auth middleware
+      if (!teacherId) {
+        return res
+          .status(403)
+          .json({ error: "Teacher ID not found in session" });
+      }
+
+      const currentClasses = await prisma.timetableSlot.findMany({
+        where: {
+          teacherId,
+          academicYearId: academicYearId ? parseInt(academicYearId) : undefined,
+        },
+        select: { classroomId: true },
+        distinct: ["classroomId"],
+      });
+
+      if (currentClasses.length > 0) {
+        where.studentStreams = {
+          some: {
+            classroomId: { in: currentClasses.map((c) => c.classroomId) },
+            ...(academicYearId && { academicYearId: parseInt(academicYearId) }),
+          },
+        };
+      } else {
+        // No classes assigned → return empty result
+        return res.json({
+          success: true,
+          data: [],
+          pagination: {
+            total: 0,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: 0,
+          },
+        });
+      }
+    }
+
+    // Additional filters (all optional)
+    const streamFilter = streamId ? { streamId: parseInt(streamId) } : {};
+    const classroomFilter = classroomId
+      ? { classroomId: parseInt(classroomId) }
+      : {};
+    const sectionFilter = section
+      ? { classroom: { section: section.toUpperCase() } }
+      : {};
+
+    // Combine filters into studentStreams.some
+    if (
+      Object.keys({ ...streamFilter, ...classroomFilter, ...sectionFilter })
+        .length > 0
+    ) {
+      where.studentStreams = {
+        some: {
+          ...streamFilter,
+          ...classroomFilter,
+          ...sectionFilter,
+          ...(academicYearId && { academicYearId: parseInt(academicYearId) }),
+        },
+      };
+    }
+
+    // Count total matching students
+    const total = await prisma.student.count({ where });
+
+    // Fetch paginated students
+    const students = await prisma.student.findMany({
+      where,
+      skip,
+      take: limitNum,
+      include: {
+        classroom: {
+          select: { name: true, section: true },
+        },
+        studentStreams: {
+          take: 1, // only most recent/current enrollment
+          orderBy: { academicYear: { startDate: "desc" } },
+          select: {
+            rollNo: true,
+            stream: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    // Flatten response for frontend
+    const data = students.map((s) => ({
+      id: s.id,
+      name: s.name,
+      rollNo: s.studentStreams?.[0]?.rollNo || "N/A",
+      stream: s.studentStreams?.[0]?.stream?.name || null,
+      classroom: s.classroom
+        ? `${s.classroom.name}${s.classroom.section ? ` - ${s.classroom.section}` : ""}`
+        : "Not Assigned",
+    }));
+
+    res.json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (err) {
+    console.error("Error in searchStudentsForPTM:", err);
+    res.status(500).json({ error: "Failed to search students" });
+  }
+};
+
+// For Students/Parents → Search Teachers
+export const searchTeachersForPTM = async (req, res) => {
+  const {
+    search = "",
+    page = "1",
+    limit = 10,
+    subjectId,
+    classroomId,
+  } = req.query;
+
+  const pageNum = Math.max(1, parseInt(page, 10));
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+
+  if (isNaN(pageNum) || isNaN(limitNum)) {
+    return res.status(400).json({ error: "Invalid page or limit value" });
+  }
+
+  // if (search.trim().length < 2) {
+  //   return res
+  //     .status(400)
+  //     .json({ error: "Search requires at least 2 characters" });
+  // }
+
+  let studentId;
+  if (req.user.role === "STUDENT") {
+    const student = await prisma.student.findUnique({
+      where: { userId: req.user.userId },
+      select: { id: true },
+    });
+    if (!student)
+      return res.status(404).json({ error: "Student profile not found" });
+    studentId = student.id;
+  } else if (req.user.role === "PARENT") {
+    studentId = req.user.actingAsStudentId;
+    if (!studentId) {
+      return res.status(400).json({ error: "Please select a child first" });
+    }
+  } else {
+    return res
+      .status(403)
+      .json({ error: "Only students or parents can search teachers" });
+  }
+
+  try {
+    // Get student's current enrollment
+    const enrollment = await prisma.studentStream.findFirst({
+      where: {
+        studentId,
+        academicYear: { isActive: true },
+      },
+      select: { classroomId: true, streamId: true },
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({ error: "No active enrollment found" });
+    }
+
+    const where = {
+      OR: [
+        { name: { contains: search.trim(), mode: "insensitive" } },
+        { email: { contains: search.trim(), mode: "insensitive" } },
+      ],
+      teacherAssignments: {
+        some: {
+          classroomId: enrollment.classroomId,
+          ...(enrollment.streamId && { streamId: enrollment.streamId }),
+          ...(subjectId && { subjectId: parseInt(subjectId) }),
+          ...(classroomId && { classroomId: parseInt(classroomId) }), // extra filter
+        },
+      },
+    };
+
+    const [total, teachers] = await Promise.all([
+      prisma.staff.count({ where }),
+      prisma.staff.findMany({
+        where,
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          subjects: { select: { name: true } },
+          teacherAssignments: {
+            take: 1,
+            select: { classroom: { select: { name: true, section: true } } },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+    // Flatten response
+    const data = teachers.map((t) => ({
+      id: t.id,
+      name: t.name,
+      email: t.email,
+      subjects: t.subjects.map((s) => s.name),
+      classroom: t.teacherAssignments?.[0]?.classroom
+        ? `${t.teacherAssignments[0].classroom.name}${
+            t.teacherAssignments[0].classroom.section
+              ? ` - ${t.teacherAssignments[0].classroom.section}`
+              : ""
+          }`
+        : null,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (err) {
+    console.error("Error in searchTeachersForPTM:", err);
+    res.status(500).json({ error: "Failed to search teachers" });
   }
 };
