@@ -885,13 +885,13 @@ export const deletePTM = async (req, res) => {
 // For Teachers → Search Students
 export const searchStudentsForPTM = async (req, res) => {
   const {
-    search = "", // name, rollNo, etc.
+    search = "",
     page = 1,
     limit = 15,
-    classroomId, // optional: filter by specific classroom
-    section, // optional: filter by section (A, B, etc.)
-    streamId, // optional: filter by stream (for 11/12)
-    academicYearId, // optional: defaults to active if not provided
+    classroomId,
+    section,
+    streamId,
+    academicYearId,
   } = req.query;
 
   // Optional: Require minimum search length (uncomment if needed)
@@ -904,10 +904,8 @@ export const searchStudentsForPTM = async (req, res) => {
     const limitNum = Math.min(50, Math.max(5, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    // Build dynamic where clause
     const where = {};
 
-    // Text search on name or rollNo (via studentStreams)
     if (search.trim()) {
       where.OR = [
         { name: { contains: search.trim(), mode: "insensitive" } },
@@ -919,14 +917,19 @@ export const searchStudentsForPTM = async (req, res) => {
       ];
     }
 
-    // Scope to teacher's current classes (recommended for privacy)
     if (req.user.role === "TEACHER" || req.user.role === "STAFF") {
-      const teacherId = req.user.teacherId; // Must be attached in auth middleware
-      if (!teacherId) {
-        return res
-          .status(403)
-          .json({ error: "Teacher ID not found in session" });
+      const staff = await prisma.staff.findUnique({
+        where: { userId: req.user.userId },
+        select: { id: true },
+      });
+
+      if (!staff) {
+        return res.status(403).json({
+          error: "Staff/Teacher profile not linked to this user account",
+        });
       }
+
+      const teacherId = staff.id;
 
       const currentClasses = await prisma.timetableSlot.findMany({
         where: {
@@ -945,7 +948,6 @@ export const searchStudentsForPTM = async (req, res) => {
           },
         };
       } else {
-        // No classes assigned → return empty result
         return res.json({
           success: true,
           data: [],
@@ -959,7 +961,6 @@ export const searchStudentsForPTM = async (req, res) => {
       }
     }
 
-    // Additional filters (all optional)
     const streamFilter = streamId ? { streamId: parseInt(streamId) } : {};
     const classroomFilter = classroomId
       ? { classroomId: parseInt(classroomId) }
@@ -968,7 +969,6 @@ export const searchStudentsForPTM = async (req, res) => {
       ? { classroom: { section: section.toUpperCase() } }
       : {};
 
-    // Combine filters into studentStreams.some
     if (
       Object.keys({ ...streamFilter, ...classroomFilter, ...sectionFilter })
         .length > 0
@@ -983,10 +983,8 @@ export const searchStudentsForPTM = async (req, res) => {
       };
     }
 
-    // Count total matching students
     const total = await prisma.student.count({ where });
 
-    // Fetch paginated students
     const students = await prisma.student.findMany({
       where,
       skip,
@@ -996,7 +994,7 @@ export const searchStudentsForPTM = async (req, res) => {
           select: { name: true, section: true },
         },
         studentStreams: {
-          take: 1, // only most recent/current enrollment
+          take: 1,
           orderBy: { academicYear: { startDate: "desc" } },
           select: {
             rollNo: true,
@@ -1007,7 +1005,6 @@ export const searchStudentsForPTM = async (req, res) => {
       orderBy: { name: "asc" },
     });
 
-    // Flatten response for frontend
     const data = students.map((s) => ({
       id: s.id,
       name: s.name,
@@ -1078,7 +1075,6 @@ export const searchTeachersForPTM = async (req, res) => {
   }
 
   try {
-    // Get student's current enrollment
     const enrollment = await prisma.studentStream.findFirst({
       where: {
         studentId,
@@ -1126,7 +1122,6 @@ export const searchTeachersForPTM = async (req, res) => {
       }),
     ]);
 
-    // Flatten response
     const data = teachers.map((t) => ({
       id: t.id,
       name: t.name,
