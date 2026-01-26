@@ -98,21 +98,100 @@ export const getParents = async (req, res) => {
   if (!["ADMIN", "STAFF"].includes(req.user.role)) {
     return sendError(res, 403, "Unauthorized", "FORBIDDEN");
   }
-  const { studentId } = req.query;
+
+  const { studentId, page = "1", limit = "20", search } = req.query;
+
   try {
-    const where = studentId
-      ? { students: { some: { studentId: parseInt(studentId) } } }
-      : {};
+    // Parse and validate pagination params
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+
+    if (isNaN(pageNum) || isNaN(limitNum)) {
+      return sendError(
+        res,
+        400,
+        "Invalid page or limit value",
+        "VALIDATION_ERROR",
+      );
+    }
+
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build dynamic where clause
+    const where = {};
+
+    // Filter by linked student (if provided)
+    if (studentId) {
+      where.students = {
+        some: { studentId: parseInt(studentId) },
+      };
+    }
+
+    // Optional: search by parent name or email
+    if (search?.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: "insensitive" } },
+        { email: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    // Get total count **first** (before fetching data)
+    const total = await prisma.parent.count({ where });
+
+    // Fetch paginated parents
     const parents = await prisma.parent.findMany({
       where,
+      skip,
+      take: limitNum,
       include: {
         user: { select: { email: true } },
-        students: { include: { student: { select: { name: true } } } },
+        students: {
+          include: {
+            student: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
       },
+      orderBy: { name: "asc" },
     });
 
-    return sendSuccess(res, 200, { parents }, "Parents fetched successfully");
+    // Optional: Flatten/format response for cleaner frontend use
+    const formatted = parents.map((p) => ({
+      id: p.id,
+      type: p.type,
+      name: p.name,
+      email: p.email,
+      phone: p.phone,
+      address: p.address,
+      linkedStudents: p.students.map((link) => ({
+        studentId: link.student.id,
+        studentName: link.student.name,
+        isPrimary: link.isPrimary,
+      })),
+    }));
+
+    return sendSuccess(
+      res,
+      200,
+      {
+        data: formatted,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.ceil(total / limitNum),
+          hasNext: pageNum < Math.ceil(total / limitNum),
+          hasPrev: pageNum > 1,
+        },
+      },
+      "Parents fetched successfully",
+    );
   } catch (err) {
+    console.error("Error in getParents:", err);
     return sendError(res, 500, "Failed to fetch parents", "INTERNAL_ERROR");
   }
 };

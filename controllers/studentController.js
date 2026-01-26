@@ -558,6 +558,23 @@ export const getStudent = async (req, res) => {
           orderBy: { date: "desc" },
           take: 30, // last 30 days
         },
+        parents: {
+          // ← changed from studentParents → parents
+          include: {
+            parent: {
+              select: {
+                id: true,
+                name: true,
+                type: true,
+                email: true,
+                phone: true,
+                address: true,
+              },
+            },
+          },
+          // orderBy is on the join table fields (isPrimary is on StudentParent)
+          orderBy: [{ isPrimary: "desc" }, { parent: { type: "asc" } }],
+        },
       },
     });
 

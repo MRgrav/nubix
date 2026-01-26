@@ -29,6 +29,9 @@ export const formatPTMActionResponse = (ptm) => {
   return base;
 };
 
+
+
+// * Updated PTM Request controller
 export const requestPTM = async (req, res) => {
   const {
     studentId,
@@ -36,171 +39,163 @@ export const requestPTM = async (req, res) => {
     requestedDate,
     requestedTime,
     mode = "offline",
-    purpose,
-    class: className,
-    section,
-    academicYearId,
+    purpose = "",
   } = req.body;
+
   const user = req.user;
 
-  // Parent must request only for selected child
-  if (user.role === "PARENT") {
-    const actingStudentId = user.actingAsStudentId;
-    if (!actingStudentId) {
-      return sendError(
-        res,
-        403,
-        "Please select a child first",
-        "CHILD_NOT_SELECTED",
-      );
-    }
-    if (parseInt(studentId) !== actingStudentId) {
-      return sendError(
-        res,
-        403,
-        "You can only request PTM for your selected child",
-        "FORBIDDEN",
-      );
-    }
-  }
-
-  if (
-    !studentId ||
-    !requestedToId ||
-    !requestedDate ||
-    !requestedTime ||
-    !purpose
-  ) {
+  // Required fields
+  if (!studentId || !requestedToId || !requestedDate || !requestedTime) {
     return sendError(
       res,
       400,
-      "studentId, requestedToId, requestedDate, requestedTime, and purpose are required",
+      "studentId, requestedToId, requestedDate, requestedTime required",
       "VALIDATION_ERROR",
     );
   }
 
   try {
-    // Fetch requestedTo user's role
-    const requestedToUser = await prisma.user.findUnique({
+    // 1. Auto-resolve current academic year
+    const activeYear = await getActiveAcademicYear(user.schoolId);
+    if (!activeYear) {
+      return sendError(
+        res,
+        400,
+        "No active academic year found",
+        "ACADEMIC_YEAR_ERROR",
+      );
+    }
+
+    // 2. Fetch student's current class & section
+    const student = await prisma.student.findUnique({
+      where: { id: parseInt(studentId) },
+      select: {
+        classroom: {
+          select: { name: true, section: true },
+        },
+        studentStreams: {
+          where: { academicYearId: activeYear.id },
+          take: 1,
+          select: {
+            classroom: { select: { name: true, section: true } },
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return sendError(res, 404, "Student not found", "NOT_FOUND");
+    }
+
+    const currentClassroom =
+      student.studentStreams?.[0]?.classroom || student.classroom;
+    const className = currentClassroom?.name || "Unknown";
+    const section = currentClassroom?.section || null;
+
+    // 3. Fetch roles for requester and target
+    const requestedByRole = user.role; // already in token
+
+    const targetUser = await prisma.user.findUnique({
       where: { id: parseInt(requestedToId) },
       select: { role: true },
     });
-    if (!requestedToUser) {
-      return sendError(res, 404, "Requested to user not found", "NOT_FOUND");
+    if (!targetUser) {
+      return sendError(res, 404, "Requested user not found", "NOT_FOUND");
     }
+    const requestedToRole = targetUser.role;
 
-    // Use real roles directly
-    const requestedByRole = user.role;
-    const requestedToRole =
-      requestedToUser.role === "STUDENT" ? "STUDENT" : "STAFF";
-
-    // Role validation (admin bypasses)
+    // 4. Simple role restrictions
     if (user.role !== "ADMIN") {
-      // Must be different roles
-      if (requestedByRole === requestedToRole) {
+      if (user.role === requestedToRole) {
         return sendError(
           res,
           400,
-          "PTM requests must be between different roles (student/parent ↔ staff)",
+          "Cannot request PTM to same role",
           "VALIDATION_ERROR",
         );
       }
 
-      // Students & Parents can only request to staff
       if (
-        (requestedByRole === "STUDENT" || requestedByRole === "PARENT") &&
+        (user.role === "STUDENT" || user.role === "PARENT") &&
         requestedToRole !== "STAFF"
       ) {
         return sendError(
           res,
           400,
-          "Students and Parents can only request PTM to staff",
+          "Can only request staff/teachers",
           "VALIDATION_ERROR",
         );
       }
 
-      // Staff can only request to students
-      if (requestedByRole === "STAFF" && requestedToRole !== "STUDENT") {
+      if (user.role === "STAFF" && requestedToRole !== "STUDENT") {
         return sendError(
           res,
           400,
-          "Staff can only request PTM to students",
+          "Staff can only request students",
           "VALIDATION_ERROR",
         );
       }
     }
-    // Resolve academic year
-    let resolvedAcademicYearId = academicYearId;
-    if (!resolvedAcademicYearId) {
-      const activeYear = await getActiveAcademicYear(req.user.schoolId);
-      if (!activeYear) {
+
+    // 5. Parent authorization check
+    if (user.role === "PARENT") {
+      const link = await prisma.studentParent.findFirst({
+        where: {
+          parent: { userId: user.id },
+          studentId: parseInt(studentId),
+        },
+      });
+      if (!link) {
         return sendError(
           res,
-          400,
-          "No active academic year found",
-          "ACADEMIC_YEAR_NOT_FOUND",
+          403,
+          "Not authorized for this student",
+          "FORBIDDEN",
         );
       }
-      resolvedAcademicYearId = activeYear.id;
     }
-    const ptmRequest = await prisma.pTMRequest.create({
+
+    // 6. Create PTM request (all required fields now filled)
+    const ptm = await prisma.pTMRequest.create({
       data: {
-        student: { connect: { id: parseInt(studentId) } },
-        class: className?.trim(),
-        section: section?.trim().toUpperCase(),
-        requestedBy: { connect: { id: user.id } },
-        requestedByRole,
-        requestedTo: { connect: { id: parseInt(requestedToId) } },
-        requestedToRole,
+        studentId: parseInt(studentId),
+        requestedById: user.id,
+        requestedToId: parseInt(requestedToId),
         requestedDate: new Date(requestedDate),
         requestedTime: requestedTime.trim(),
         mode,
-        purpose: purpose.trim(),
+        purpose: purpose.trim() || null,
         status: "pending",
-        academicYear: { connect: { id: resolvedAcademicYearId } },
+        academicYearId: activeYear.id,
+        class: className, // ← auto-filled
+        section, // ← auto-filled (nullable)
+        requestedByRole, // ← derived from user.role
+        requestedToRole, // ← derived from target user
       },
       include: {
-        student: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            schoolId: true,
-            userId: true,
-            classroomId: true,
-          },
-        },
-        requestedBy: {
-          select: {
-            id: true,
-            role: true,
-            email: true,
-            staff: { select: { name: true } },
-            student: { select: { name: true } },
-          },
-        },
-        requestedTo: {
-          select: {
-            id: true,
-            role: true,
-            email: true,
-            staff: { select: { name: true } },
-          },
-        },
+        student: { select: { id: true, name: true } },
+        requestedBy: { select: { id: true, role: true } },
+        requestedTo: { select: { id: true, role: true, email: true } },
       },
     });
-    return sendSuccess(
-      res,
-      201,
-      ptmRequest,
-      "PTM request created successfully",
-    );
+
+    return sendSuccess(res, 201, ptm, "PTM request created successfully");
   } catch (err) {
-    console.error("Request PTM error:", err);
+    console.error("PTM request error:", err);
     if (err.code === "P2025") {
-      return sendError(res, 404, "Student or teacher not found", "NOT_FOUND");
+      return sendError(
+        res,
+        404,
+        "Student or target user not found",
+        "NOT_FOUND",
+      );
     }
-    return sendError(res, 500, "Failed to request PTM", "INTERNAL_ERROR");
+    return sendError(
+      res,
+      500,
+      "Failed to create PTM request",
+      "INTERNAL_ERROR",
+    );
   }
 };
 
