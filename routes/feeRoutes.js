@@ -25,57 +25,57 @@ router.use(authenticate);
 router.post(
   "/categories",
   authorize("ADMIN"),
-  feeCategoryCtrl.createFeeCategory
+  feeCategoryCtrl.createFeeCategory,
 );
 router.get("/categories", authorize("ADMIN"), feeCategoryCtrl.getFeeCategories);
 router.put(
   "/categories/:id",
   authorize("ADMIN"),
-  feeCategoryCtrl.updateFeeCategory
+  feeCategoryCtrl.updateFeeCategory,
 );
 router.delete(
   "/categories/:id",
   authorize("ADMIN"),
-  feeCategoryCtrl.deleteFeeCategory
+  feeCategoryCtrl.deleteFeeCategory,
 );
 
 // Fee Structures
 router.post(
   "/structures",
   authorize("ADMIN"),
-  feeStructureCtrl.createFeeStructure
+  feeStructureCtrl.createFeeStructure,
 );
 router.get(
   "/structures",
   authorize("ADMIN"),
-  feeStructureCtrl.getFeeStructures
+  feeStructureCtrl.getFeeStructures,
 );
 router.put(
   "/structures/:id",
   authorize("ADMIN"),
-  feeStructureCtrl.updateFeeStructure
+  feeStructureCtrl.updateFeeStructure,
 );
 router.put(
   "/structures/:id/lock",
   authorize("ADMIN"),
-  feeStructureCtrl.lockFeeStructure
+  feeStructureCtrl.lockFeeStructure,
 );
 
 // Student Fees
 router.post(
   "/student-fees",
   authorize("ADMIN"),
-  studentFeeCtrl.assignStudentFee
+  studentFeeCtrl.assignStudentFee,
 );
 router.get(
   "/student-fees",
   authorize("ADMIN", "STAFF"),
-  studentFeeCtrl.getStudentFee
+  studentFeeCtrl.getStudentFee,
 );
 router.get(
   "/dues",
   authorize("ADMIN", "STAFF"),
-  studentFeeCtrl.getOutstandingDues
+  studentFeeCtrl.getOutstandingDues,
 );
 router.post("/payments", authorize("ADMIN"), studentFeeCtrl.recordPayment);
 router.post("/discounts", authorize("ADMIN"), studentFeeCtrl.applyDiscount);
@@ -90,7 +90,7 @@ router.post("/transport/routes", authorize("ADMIN"), createTransportRoute);
 router.get(
   "/transport/routes",
   authorize("ADMIN", "STAFF"),
-  getTransportRoutes
+  getTransportRoutes,
 );
 router.post("/transport/assign", authorize("ADMIN"), assignStudentTransport);
 router.post("/transport/opt-out", authorize("ADMIN"), optOutStudentTransport);
