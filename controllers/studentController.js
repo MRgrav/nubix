@@ -4,6 +4,10 @@ import { z } from "zod";
 import { generateRollNo } from "../utils/rollNoGenerator.js";
 import { getActiveAcademicYear } from "./../utils/academicYearHelper.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
+import {
+  getStudentSubjects,
+  validateElectivesForEnrollment,
+} from "../utils/studentUtils.js";
 
 // Zod schema for createStudent validation
 const createStudentSchema = z
@@ -54,6 +58,10 @@ const createStudentSchema = z
         }),
       )
       .optional(),
+    electiveCurriculumSubjectIds: z
+      .array(z.number().int().positive())
+      .optional()
+      .default([]),
   })
   .refine(
     (data) => {
@@ -303,6 +311,31 @@ export const createStudent = async (req, res) => {
           },
         });
 
+        if (validated.electiveCurriculumSubjectIds?.length && enrollment) {
+          const valid = await validateElectivesForEnrollment(
+            tx,
+            enrollment.id,
+            validated.electiveCurriculumSubjectIds,
+          );
+
+          if (!valid) {
+            throw new Error(
+              "One or more selected electives are invalid for this class/stream/year",
+            );
+          }
+
+          await tx.studentElectiveChoice.createMany({
+            data: validated.electiveCurriculumSubjectIds.map((id) => ({
+              studentId: student.id,
+              academicYearId: enrollment.academicYearId,
+              curriculumSubjectId: id,
+              status: "PENDING", // or "APPROVED" if you skip approval at creation
+              approvedById: null, // pending approval (can be auto-approved if you want)
+            })),
+            skipDuplicates: true,
+          });
+        }
+
         // Update student's classroomId
         await tx.student.update({
           where: { id: student.id },
@@ -389,6 +422,18 @@ export const createStudent = async (req, res) => {
       return { user, student, enrollment, tempPassword, createdParents };
     });
 
+    let requestedElectives = [];
+    if (validated.electiveCurriculumSubjectIds?.length) {
+      requestedElectives = await prisma.studentElectiveChoice.findMany({
+        where: {
+          studentId: result.student.id,
+          academicYearId: result.enrollment.academicYearId,
+          status: "PENDING",
+        },
+        select: { curriculumSubjectId: true },
+      });
+    }
+
     // Success response
     res.status(201).json({
       message:
@@ -399,6 +444,9 @@ export const createStudent = async (req, res) => {
       temporaryPassword: result.tempPassword,
       createdParents: result.createdParents.length
         ? result.createdParents
+        : undefined,
+      requestedElectives: requestedElectives.length
+        ? requestedElectives.map((e) => e.curriculumSubjectId)
         : undefined,
       note: "Please securely share the temporary password with the student/parent",
     });
@@ -442,11 +490,13 @@ export const getStudents = async (req, res) => {
     page = 1,
     limit = 20,
     search,
-    include = "school,classroom",
+    include = "school,classroom,subjects",
   } = req.query;
 
   try {
-    // Force parents to only see their selected child
+    let where = {};
+
+    // ^ Force parents to only see their selected child
     if (req.user.role === "PARENT") {
       const actingId = req.user.actingAsStudentId;
       if (!actingId) {
@@ -457,14 +507,13 @@ export const getStudents = async (req, res) => {
           "CHILD_NOT_SELECTED",
         );
       }
-      where.id = actingId; // Only return selected child
+      where.id = actingId;
     }
 
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const where = {};
     if (schoolId) where.schoolId = parseInt(schoolId);
     if (grade) where.grade = grade;
 
@@ -488,26 +537,66 @@ export const getStudents = async (req, res) => {
     // Get total count for pagination metadata
     const total = await prisma.student.count({ where });
 
-    const includes = (include || "").split(",").map((s) => s.trim());
+    const includesSet = new Set(
+      (include || "").split(",").map((s) => s.trim()),
+    );
 
-    // Fetch paginated students
-    const students = await prisma.student.findMany({
+    const baseInclude = {
+      school: { select: { id: true, name: true, schoolCode: true } },
+      classroom: { select: { id: true, name: true, section: true } },
+      studentStreams: {
+        include: {
+          academicYear: { select: { label: true } },
+          stream: { select: { name: true } },
+        },
+        orderBy: { academicYear: { startDate: "desc" } },
+        take: 1,
+      },
+    };
+
+    let students = await prisma.student.findMany({
       where,
       skip,
       take: limitNum,
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        classroom: { select: { id: true, name: true, section: true } },
-        studentStreams: {
-          include: {
-            academicYear: { select: { label: true } },
-            stream: { select: { name: true } },
-          },
-          orderBy: { academicYear: { startDate: "desc" } },
-        },
-      },
+      include: baseInclude,
       orderBy: [{ name: "asc" }],
     });
+
+    // Enrich with current subjects only if explicitly requested
+    if (includesSet.has("subjects")) {
+      const enriched = await Promise.allSettled(
+        students.map(async (student) => {
+          try {
+            const subjects = await getStudentSubjects(student.id);
+            return {
+              ...student,
+              currentSubjects: subjects
+                .filter((cs) => cs.subject)
+                .map((cs) => ({
+                  id: cs.subject.id,
+                  name: cs.subject.name,
+                  code: cs.subject.code,
+                  category: cs.category,
+                  isMandatory: cs.isMandatory,
+                })),
+            };
+          } catch (innerErr) {
+            console.error(
+              `Failed to fetch subjects for student ${student.id}:`,
+              innerErr,
+            );
+            return { ...student, currentSubjects: [] };
+          }
+        }),
+      );
+
+      // Flatten results, fallback to original student if any promise failed
+      students = enriched.map((result) =>
+        result.status === "fulfilled"
+          ? result.value
+          : result.reason || students[enriched.indexOf(result)],
+      );
+    }
 
     // Pagination metadata
     const totalPages = Math.ceil(total / limitNum);
@@ -556,7 +645,22 @@ export const getStudent = async (req, res) => {
         },
         attendances: {
           orderBy: { date: "desc" },
-          take: 30, // last 30 days
+          take: 30,
+        },
+        parents: {
+          include: {
+            parent: {
+              select: {
+                id: true,
+                name: true,
+                type: true,
+                email: true,
+                phone: true,
+                address: true,
+              },
+            },
+          },
+          orderBy: [{ isPrimary: "desc" }, { parent: { type: "asc" } }],
         },
         parents: {
           // ← changed from studentParents → parents
@@ -581,8 +685,28 @@ export const getStudent = async (req, res) => {
     if (!student) {
       return sendError(res, 404, "Student not found", "NOT_FOUND");
     }
+    const subjects = await getStudentSubjects(parseInt(id));
 
-    return sendSuccess(res, 200, student, "Student fetched successfully");
+    // Attach to response
+    const enrichedStudent = {
+      ...student,
+      currentSubjects: subjects
+        .filter((cs) => cs.subject) // null-safety: skip any broken curriculum records
+        .map((cs) => ({
+          id: cs.subject.id,
+          name: cs.subject.name,
+          code: cs.subject.code,
+          category: cs.category,
+          isMandatory: cs.isMandatory,
+        })),
+    };
+
+    return sendSuccess(
+      res,
+      200,
+      enrichedStudent,
+      "Student fetched successfully",
+    );
   } catch (err) {
     console.error(err);
     return sendError(res, 500, "Failed to fetch student", "INTERNAL_ERROR");
