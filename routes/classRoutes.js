@@ -10,6 +10,8 @@ import {
   getClassTeachers,
   getClassSubjects,
   getStudentsInClass,
+  setSubjectWiseAttendance,
+  getClassesSubjectWiseSettings,
 } from "../controllers/classController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 const router = express.Router();
@@ -17,6 +19,14 @@ router.use(authenticate);
 
 router.get("/", authorize("ADMIN", "STAFF"), getClassrooms);
 router.post("/", authorize("ADMIN", "STAFF"), createClassroom);
+
+// Subject-wise attendance management (Admin only) - must come before /:id routes
+router.get(
+  "/subject-wise-attendance",
+  authorize("ADMIN"),
+  getClassesSubjectWiseSettings,
+);
+
 router.get("/:id", authorize("ADMIN", "STAFF"), getClassroom);
 router.put("/:id", authorize("ADMIN", "STAFF"), updateClassroom);
 router.delete("/:id", deleteClassroom);
@@ -47,6 +57,13 @@ router.get(
   "/:id/subjects",
   authorize("ADMIN", "STAFF", "STUDENT"),
   getClassSubjects,
+);
+
+// Set subject-wise attendance for a specific class (Admin only)
+router.put(
+  "/:id/subject-wise-attendance",
+  authorize("ADMIN"),
+  setSubjectWiseAttendance,
 );
 
 export default router;

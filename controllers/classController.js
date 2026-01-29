@@ -34,6 +34,7 @@ export const createClassroom = async (req, res) => {
       data: {
         name: name.trim(),
         section: (section || "A").trim().toUpperCase(),
+        isSubjectWiseAttendance: req.body.isSubjectWiseAttendance || false,
         school: { connect: { id: parseInt(schoolId) } },
       },
       include: {
@@ -102,6 +103,9 @@ export const updateClassroom = async (req, res) => {
     if (name) data.name = name.trim();
     if (section) data.section = section.trim().toUpperCase();
     if (schoolId) data.school = { connect: { id: parseInt(schoolId) } };
+    if (req.body.isSubjectWiseAttendance !== undefined) {
+      data.isSubjectWiseAttendance = Boolean(req.body.isSubjectWiseAttendance);
+    }
 
     // Prevent duplicate name + section in same school
     if (name || section) {
@@ -589,5 +593,115 @@ export const getStudentsInClass = async (req, res) => {
     return sendError(res, 500, "Failed to fetch students", "INTERNAL_ERROR");
   } finally {
     console.log("=== DEBUG: getStudentsInClass ended ===");
+  }
+};
+
+/**
+ * Set subject-wise attendance requirement for a class (Admin only)
+ * PUT /api/classes/:id/subject-wise-attendance
+ * Body: { isSubjectWiseAttendance: true/false }
+ */
+export const setSubjectWiseAttendance = async (req, res) => {
+  const { id } = req.params;
+  const { isSubjectWiseAttendance } = req.body;
+
+  if (typeof isSubjectWiseAttendance !== "boolean") {
+    return res.status(400).json({
+      error: "isSubjectWiseAttendance must be a boolean (true or false)",
+    });
+  }
+
+  try {
+    // Check if classroom exists
+    const classroom = await prisma.classroom.findUnique({
+      where: { id: parseInt(id) },
+      select: {
+        id: true,
+        name: true,
+        section: true,
+        isSubjectWiseAttendance: true,
+        school: {
+          select: { id: true, name: true, schoolCode: true },
+        },
+      },
+    });
+
+    if (!classroom) {
+      return res.status(404).json({ error: "Classroom not found" });
+    }
+
+    // Update the subject-wise attendance setting
+    const updated = await prisma.classroom.update({
+      where: { id: parseInt(id) },
+      data: { isSubjectWiseAttendance },
+      include: {
+        school: {
+          select: { id: true, name: true, schoolCode: true },
+        },
+        _count: {
+          select: { students: true },
+        },
+      },
+    });
+
+    res.json({
+      message: `Subject-wise attendance ${isSubjectWiseAttendance ? "enabled" : "disabled"} for ${updated.name} ${updated.section}`,
+      classroom: updated,
+    });
+  } catch (err) {
+    console.error(err);
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Classroom not found" });
+    }
+    res.status(500).json({ error: "Failed to update subject-wise attendance setting" });
+  }
+};
+
+/**
+ * Get all classes with their subject-wise attendance settings
+ * GET /api/classes/subject-wise-attendance?schoolId=1
+ */
+export const getClassesSubjectWiseSettings = async (req, res) => {
+  const { schoolId } = req.query;
+
+  try {
+    const where = schoolId ? { schoolId: parseInt(schoolId) } : {};
+
+    const classrooms = await prisma.classroom.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        section: true,
+        isSubjectWiseAttendance: true,
+        school: {
+          select: { id: true, name: true, schoolCode: true },
+        },
+        _count: {
+          select: { students: true },
+        },
+      },
+      orderBy: [{ name: "asc" }, { section: "asc" }],
+    });
+
+    // Group by subject-wise setting
+    const withSubjectWise = classrooms.filter((c) => c.isSubjectWiseAttendance);
+    const withoutSubjectWise = classrooms.filter((c) => !c.isSubjectWiseAttendance);
+
+    res.json({
+      total: classrooms.length,
+      withSubjectWise: {
+        count: withSubjectWise.length,
+        classes: withSubjectWise,
+      },
+      withoutSubjectWise: {
+        count: withoutSubjectWise.length,
+        classes: withoutSubjectWise,
+      },
+      all: classrooms,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch classes subject-wise settings" });
   }
 };
