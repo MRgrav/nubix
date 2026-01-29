@@ -338,11 +338,17 @@ model Attendance {
   academicYearId Int
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
 
-  @@unique([studentId, date, academicYearId])
+  // Subject (optional - for subject-wise attendance)
+  subject   Subject? @relation(fields: [subjectId], references: [id])
+  subjectId Int?
+
+  @@unique([studentId, date, academicYearId, subjectId])
   @@unique([staffId, date, academicYearId])
   @@index([studentId])
   @@index([staffId])
   @@index([date])
+  @@index([academicYearId])
+  @@index([subjectId])
 }
 
 model Subject {
@@ -368,12 +374,15 @@ model Subject {
   teacherAssignments TeacherAssignment[]
 
   curriculumSubjects CurriculumSubject[]
+
+  attendances Attendance[]
 }
 
 model Classroom {
   id        Int      @id @default(autoincrement())
   name      String
   section   String   @default("A")
+  isSubjectWiseAttendance Boolean @default(false) // Dynamic: determines if this class needs subject-wise attendance
   createdAt DateTime @default(now())
 
   school   School @relation(fields: [schoolId], references: [id])
