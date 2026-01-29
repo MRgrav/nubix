@@ -14,11 +14,18 @@ import {
   studentProfileValidation,
 } from "../middlewares/validationMiddleware.js";
 import { enforceStudentAccess } from "../middlewares/studentAccessMiddleware.js";
+import {
+  approveElective,
+  dropElective,
+  getAvailableElectives,
+  rejectElective,
+  requestElectives,
+} from "../controllers/studentElectiveController.js";
 
 const router = express.Router();
 
 router.use(authenticate);
-
+//
 // Create route
 router.post("/", authorize("ADMIN", "STAFF"), studentValidation, createStudent);
 
@@ -52,5 +59,41 @@ router.put(
 router.delete("/:id", authenticate, authorize("ADMIN"), deleteStudent);
 
 router.get("/:studentId/teachers", authenticate, getTeachersForStudent);
+
+// New elective routes (all require authentication + role check)
+router.post(
+  "/:studentId/electives",
+  authenticate,
+  authorize("ADMIN", "STAFF"),
+  requestElectives,
+);
+
+router.post(
+  "/:studentId/electives/:electiveChoiceId/approve",
+  authenticate,
+  authorize("ADMIN"),
+  approveElective,
+);
+
+router.post(
+  "/:studentId/electives/:electiveChoiceId/reject",
+  authenticate,
+  authorize("ADMIN"),
+  rejectElective,
+);
+
+router.delete(
+  "/:studentId/electives/:curriculumSubjectId",
+  authenticate,
+  authorize("ADMIN", "STAFF"),
+  dropElective,
+);
+
+router.get(
+  "/:studentId/available-electives",
+  authenticate,
+  authorize("ADMIN", "STAFF"),
+  getAvailableElectives,
+);
 
 export default router;
