@@ -36,10 +36,11 @@ model AcademicYear {
 
   curriculumSubjects CurriculumSubject[]
 
-  feeStructures     FeeStructure[]
-  studentFees       StudentFee[]
-  lateFeeConfigs    LateFeeConfig[]
-  studentTransports StudentTransport[]
+  feeStructures          FeeStructure[]
+  studentFees            StudentFee[]
+  lateFeeConfigs         LateFeeConfig[]
+  studentTransports      StudentTransport[]
+  studentElectiveChoices StudentElectiveChoice[]
 
   @@index([isActive])
   @@index([startDate, endDate])
@@ -59,6 +60,7 @@ model Stream {
   curriculumSubjects CurriculumSubject[]
 
   feeStructures FeeStructure[]
+  TimetableSlot TimetableSlot[]
 
   @@index([name])
 }
@@ -97,15 +99,15 @@ model School {
   updatedAt    DateTime @updatedAt
   rollNoFormat String?
 
-  users          User[]
-  students       Student[]
-  staff          Staff[]
-  classrooms     Classroom[]
-  subjects       Subject[]
-  examinations   Examination[]
-  assignments    Assignment[]
-  timetableSlots TimetableSlot[]
-  announcements  Announcement[]  @relation("SchoolAnnouncements")
+  users              User[]
+  students           Student[]
+  staff              Staff[]
+  classrooms         Classroom[]
+  subjects           Subject[]
+  examinations       Examination[]
+  assignments        Assignment[]
+  timetableSlots     TimetableSlot[]
+  announcements      Announcement[]      @relation("SchoolAnnouncements")
   curriculumSubjects CurriculumSubject[]
 }
 
@@ -198,7 +200,9 @@ model Student {
   studentFees       StudentFee[]
   studentTransports StudentTransport[]
 
-  parents     StudentParent[]
+  parents StudentParent[]
+
+  studentElectiveChoices StudentElectiveChoice[]
 }
 
 model Staff {
@@ -283,8 +287,6 @@ enum Role {
   PARENT
 }
 
-
-
 enum AttendanceStatus {
   PRESENT
   ABSENT
@@ -317,8 +319,9 @@ model User {
   discountsCreated   Discount[]      @relation
   adjustmentsCreated FeeAdjustment[] @relation
 
-  teacherAssignmentsAssigned TeacherAssignment[] @relation
-  parent      Parent?
+  teacherAssignmentsAssigned TeacherAssignment[]     @relation
+  approvedElectiveChoices    StudentElectiveChoice[] @relation("ElectiveApprovedBy")
+  parent                     Parent?
 }
 
 model Attendance {
@@ -527,6 +530,9 @@ model TimetableSlot {
   subject   Subject? @relation(fields: [subjectId], references: [id])
   subjectId Int?
 
+  streamId Int?
+  stream   Stream? @relation(fields: [streamId], references: [id], onDelete: SetNull)
+
   teacher   Staff? @relation(fields: [teacherId], references: [id])
   teacherId Int?
 
@@ -540,6 +546,7 @@ model TimetableSlot {
   @@index([classroomId])
   @@index([day])
   @@index([academicYearId])
+  @@index([streamId])
 }
 
 enum AnnouncementType {
@@ -724,11 +731,13 @@ model CurriculumSubject {
   category    CurriculumCategory
   isMandatory Boolean            @default(true)
 
-  schoolId       Int
-  school         School   @relation(fields: [schoolId], references: [id])
+  schoolId Int
+  school   School @relation(fields: [schoolId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  studentElectiveChoices StudentElectiveChoice[]
 
   @@unique([academicYearId, className, streamId, subjectId])
   @@index([academicYearId])
@@ -972,7 +981,6 @@ model FeeAdjustment {
   @@index([studentFeeId])
 }
 
-
 enum ParentType {
   FATHER
   MOTHER
@@ -981,31 +989,60 @@ enum ParentType {
 }
 
 model Parent {
-  id        Int      @id @default(autoincrement())
+  id        Int        @id @default(autoincrement())
   type      ParentType
-  name      String   // Required in controller
-  email     String   @unique
+  name      String // Required in controller
+  email     String     @unique
   phone     String?
   address   String?
-  isActive  Boolean  @default(true)  // For soft delete
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean    @default(true) // For soft delete
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
-  user      User?    @relation(fields: [userId], references: [id])
-  userId    Int?     @unique
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?  @unique
 
-  students  StudentParent[]  // Many-to-many
+  students StudentParent[] // Many-to-many
 }
 
 model StudentParent {
   studentId Int
   parentId  Int
-  isPrimary Boolean  @default(false)
+  isPrimary Boolean @default(false)
 
-  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent  Parent  @relation(fields: [parentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, parentId])
   @@index([studentId])
   @@index([parentId])
+}
+
+enum ElectiveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DROPPED
+}
+
+model StudentElectiveChoice {
+  id Int @id @default(autoincrement())
+
+  studentId           Int
+  academicYearId      Int
+  curriculumSubjectId Int
+
+  student           Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear      AcademicYear      @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  curriculumSubject CurriculumSubject @relation(fields: [curriculumSubjectId], references: [id], onDelete: Cascade)
+
+  approvedById Int?
+  approvedBy   User?     @relation("ElectiveApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime? @default(now())
+
+  status ElectiveStatus @default(PENDING)
+
+  @@unique([studentId, academicYearId, curriculumSubjectId])
+  @@index([studentId, academicYearId])
+  @@index([curriculumSubjectId])
 }

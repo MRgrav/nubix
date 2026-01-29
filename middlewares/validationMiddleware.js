@@ -63,7 +63,7 @@ export const studentValidation = [
   body("admissionReceiptLink")
     .optional()
     .customSanitizer((v) =>
-      typeof v === "string" ? v.replace(/`/g, "").trim() : v
+      typeof v === "string" ? v.replace(/`/g, "").trim() : v,
     )
     .isURL()
     .withMessage("Admission receipt link must be a valid URL"),
@@ -113,45 +113,43 @@ export const assignmentValidation = [
   validateRequest,
 ];
 
-export const timetableSlotValidation = [
-  body("schoolId")
-    .optional()
-    .isInt()
-    .withMessage("schoolId must be an integer"),
-  body("schoolCode")
-    .optional()
-    .isLength({ min: 4, max: 4 })
-    .withMessage("schoolCode must be 4 characters"),
-  body().custom((_, { req }) => {
-    if (!req.body.schoolId && !req.body.schoolCode) {
-      throw new Error("Either schoolId or schoolCode is required");
-    }
-    return true;
-  }),
+export const timetableSlotCreateValidation = [
+  body("schoolId").isInt().withMessage("Valid schoolId is required"),
   body("classroomId").isInt().withMessage("Valid classroom ID is required"),
   body("day")
-    .isIn([
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-      "SATURDAY",
-      "SUNDAY",
-    ])
+    .isIn(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"])
     .withMessage("Invalid day"),
-  body("slotType").isIn(["CLASS", "BREAK"]).withMessage("Invalid slot type"),
+  body("slotType")
+    .isIn(["CLASS", "BREAK", "LUNCH", "ACTIVITY"])
+    .withMessage("Invalid slot type"),
   body("startTime")
-    .matches(/^([01]?\d|2[0-3]):([0-5]\d)$/)
+    .matches(/^([01]\d|2[0-3]):([0-5]\d)$/)
     .withMessage("startTime must be HH:mm"),
   body("endTime")
-    .matches(/^([01]?\d|2[0-3]):([0-5]\d)$/)
+    .matches(/^([01]\d|2[0-3]):([0-5]\d)$/)
     .withMessage("endTime must be HH:mm"),
-  body("academicYear").notEmpty().withMessage("Academic year is required"),
-  body("subjectId").optional().isInt(),
-  body("teacherId").optional().isInt(),
-  body("notes").optional(),
-  validateRequest,
+];
+
+export const timetableSlotUpdateValidation = [
+  body("schoolId").optional().isInt(),
+  body("classroomId").optional().isInt(),
+  body("academicYearId").optional().isInt(),
+
+  body("day")
+    .optional()
+    .isIn(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]),
+
+  body("slotType").optional().isIn(["CLASS", "BREAK", "LUNCH", "ACTIVITY"]),
+
+  body("startTime")
+    .optional()
+    .matches(/^([01]\d|2[0-3]):([0-5]\d)$/)
+    .withMessage("startTime must be HH:mm"),
+
+  body("endTime")
+    .optional()
+    .matches(/^([01]\d|2[0-3]):([0-5]\d)$/)
+    .withMessage("endTime must be HH:mm"),
 ];
 
 export const academicYearValidation = [
