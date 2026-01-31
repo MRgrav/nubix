@@ -93,7 +93,7 @@ model StudentStream {
 model School {
   id           Int      @id @default(autoincrement())
   name         String
-  schoolCode   String   @unique @db.Char(4)
+  schoolCode   String   @unique @db.Char(5)
   address      String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

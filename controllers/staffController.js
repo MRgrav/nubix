@@ -223,71 +223,98 @@ export const createStaff = async (req, res) => {
 };
 
 export const getStaffs = async (req, res) => {
-  const { schoolId, role } = req.query;
+  const { schoolId, role, page = 1, limit = 20, search } = req.query;
 
   try {
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
     const where = {};
     if (schoolId) where.schoolId = parseInt(schoolId);
     if (role) where.role = role;
 
-    const staffList = await prisma.staff.findMany({
+    if (search?.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: "insensitive" } },
+        { email: { contains: search.trim(), mode: "insensitive" } },
+      ];
+    }
+
+    const total = await prisma.staff.count({ where });
+
+    let staffList = await prisma.staff.findMany({
       where,
+      skip,
+      take: limitNum,
       include: {
         school: { select: { id: true, name: true } },
-        subjects: true,
+        subjects: { select: { id: true, name: true } },
         user: { select: { email: true } },
       },
       orderBy: { name: "asc" },
     });
 
-    // Always try to attach timetable count for current active year
+    // Optional: Add timetable count for current active year
     let activeYearId = null;
-    if (schoolId) {
-      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
+    if (schoolId || req.user.schoolId) {
+      const activeYear = await getActiveAcademicYear(
+        parseInt(schoolId || req.user.schoolId),
+      );
       activeYearId = activeYear?.id;
     }
 
-    const staffWithCount = activeYearId
-      ? await Promise.all(
-          staffList.map(async (staff) => {
-            const count = await prisma.timetableSlot.count({
-              where: {
-                teacherId: staff.id,
-                academicYearId: activeYearId,
-              },
-            });
-            return { ...staff, timetablePeriods: count };
-          }),
-        )
-      : staffList;
+    if (activeYearId) {
+      staffList = await Promise.all(
+        staffList.map(async (staff) => {
+          const count = await prisma.timetableSlot.count({
+            where: {
+              teacherId: staff.id,
+              academicYearId: activeYearId,
+            },
+          });
+          return { ...staff, timetablePeriods: count };
+        }),
+      );
+    }
 
-    res.json({ staff: staffWithCount });
+    const totalPages = Math.ceil(total / limitNum);
+
+    return sendSuccess(res, 200, staffList, "Staff list fetched successfully", {
+      pagination: {
+        total,
+        totalPages,
+        currentPage: pageNum,
+        perPage: limitNum,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
+      },
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch staff" });
+    console.error("Get staff error:", err);
+    return sendError(res, 500, "Failed to fetch staff list", "INTERNAL_ERROR");
   }
 };
 
 export const getStaffMember = async (req, res) => {
   const { id } = req.params;
   try {
+    const staffId = parseInt(id);
+    if (isNaN(staffId)) {
+      return sendError(res, 400, "Invalid staff ID", "INVALID_ID");
+    }
+
     const staff = await prisma.staff.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: staffId },
       include: {
-        school: true,
-        subjects: true,
-        user: {
-          select: {
-            id: true,
-            email: true,
-            role: true,
-          },
-        },
+        school: { select: { id: true, name: true, schoolCode: true } },
+        subjects: { select: { id: true, name: true, code: true } },
+        user: { select: { id: true, email: true, role: true } },
       },
     });
 
     if (!staff) {
-      return res.status(404).json({ error: "Staff member not found" });
+      return sendError(res, 404, "Staff member not found", "NOT_FOUND");
     }
 
     const activeYear = await getActiveAcademicYear(staff.schoolId);
@@ -307,15 +334,25 @@ export const getStaffMember = async (req, res) => {
         })
       : [];
 
-    res.json({
-      staff,
-      currentAcademicYear: activeYear ? activeYear.label : null,
-      timetableSlots,
-      totalPeriods: timetableSlots.length,
-    });
+    return sendSuccess(
+      res,
+      200,
+      {
+        staff,
+        currentAcademicYear: activeYear ? activeYear.label : null,
+        timetableSlots,
+        totalPeriods: timetableSlots.length,
+      },
+      "Staff member details fetched successfully",
+    );
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch staff member" });
+    console.error("Get staff member error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to fetch staff member",
+      "INTERNAL_ERROR",
+    );
   }
 };
 
@@ -372,14 +409,18 @@ export const updateStaffMember = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const staffData = buildStaffPayload(req.body);
+    const staffId = parseInt(id);
+    if (isNaN(staffId)) return sendError(res, 400, "Invalid staff ID");
+
+    const validated = updateStaffSchema.parse(req.body);
+    const staffData = buildStaffPayload(validated, true);
 
     if (req.body.schoolId) {
       staffData.school = { connect: { id: parseInt(req.body.schoolId) } };
     }
 
     const staff = await prisma.staff.update({
-      where: { id: parseInt(id) },
+      where: { id: staffId },
       data: staffData,
       include: {
         school: { select: { id: true, name: true, schoolCode: true } },
@@ -387,39 +428,91 @@ export const updateStaffMember = async (req, res) => {
       },
     });
 
-    res.json({ message: "Staff updated successfully", staff });
+    return sendSuccess(res, 200, staff, "Staff member updated successfully");
   } catch (err) {
-    console.error(err);
+    console.error("Update staff error:", err);
+
+    if (err instanceof z.ZodError) {
+      return sendError(
+        res,
+        400,
+        err.errors.map((e) => e.message).join(", "),
+        "VALIDATION_ERROR",
+      );
+    }
+
     if (err.code === "P2025") {
-      return res.status(404).json({ error: "Staff member not found" });
+      return sendError(res, 404, "Staff member not found", "NOT_FOUND");
     }
+
     if (err.code === "P2002") {
-      return res
-        .status(400)
-        .json({ error: "Email or unique field already in use" });
+      return sendError(
+        res,
+        409,
+        "Email or unique field already in use",
+        "CONFLICT",
+      );
     }
-    if (err.code === "INVALID_DATE") {
-      return res
-        .status(400)
-        .json({ error: err.message, field: err.meta?.field });
-    }
-    res.status(500).json({ error: "Failed to update staff member" });
+
+    return sendError(
+      res,
+      500,
+      "Failed to update staff member",
+      "INTERNAL_ERROR",
+    );
   }
 };
 
 export const deleteStaffMember = async (req, res) => {
   const { id } = req.params;
+
   try {
-    await prisma.staff.delete({
-      where: { id: parseInt(id) },
+    const staffId = parseInt(id);
+    if (isNaN(staffId)) return sendError(res, 400, "Invalid staff ID");
+
+    // Optional: Check if staff exists and belongs to same school
+    const staff = await prisma.staff.findUnique({
+      where: { id: staffId },
+      select: { id: true, schoolId: true },
     });
 
-    res.json({ message: "Staff member deleted successfully" });
-  } catch (err) {
-    console.error(err);
-    if (err.code === "P2025") {
-      return res.status(404).json({ error: "Staff member not found" });
+    if (!staff) {
+      return sendError(res, 404, "Staff member not found", "NOT_FOUND");
     }
-    res.status(500).json({ error: "Failed to delete staff member" });
+
+    if (req.user.schoolId && req.user.schoolId !== staff.schoolId) {
+      return sendError(
+        res,
+        403,
+        "Not authorized to delete this staff member",
+        "FORBIDDEN",
+      );
+    }
+
+    await prisma.$transaction([
+      prisma.timetableSlot.deleteMany({ where: { teacherId: staffId } }),
+      prisma.staff.delete({ where: { id: staffId } }),
+      // Add more cascades if needed (e.g., teacherAssignments, etc.)
+    ]);
+
+    return sendSuccess(
+      res,
+      200,
+      null,
+      "Staff member and related records deleted successfully",
+    );
+  } catch (err) {
+    console.error("Delete staff error:", err);
+
+    if (err.code === "P2025") {
+      return sendError(res, 404, "Staff member not found", "NOT_FOUND");
+    }
+
+    return sendError(
+      res,
+      500,
+      "Failed to delete staff member",
+      "INTERNAL_ERROR",
+    );
   }
 };
