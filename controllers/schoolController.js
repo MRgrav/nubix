@@ -1,20 +1,37 @@
 import prisma from "../models/prisma.js";
+import { sendError, sendSuccess } from "../utils/responseStructure.js";
 
 export const createSchool = async (req, res) => {
-  const { name, schoolCode, address } = req.body;
   try {
-    const existingSchool = await prisma.school.findFirst({
-      where: { OR: [{ name }, { schoolCode }] },
+    const { name, schoolCode, address } = req.body;
+
+    // Normalize inputs
+    const normalizedCode = schoolCode.trim();
+    const normalizedName = name.trim();
+
+    // Check for duplicates (separate checks for better messages)
+    const existingByCode = await prisma.school.findUnique({
+      where: { schoolCode: normalizedCode },
     });
 
-    if (existingSchool) {
-      return res.status(400).json({
-        error: "School with this name or code already exists",
-      });
+    if (existingByCode) {
+      return sendError(res, 409, "School code already exists", "CODE_CONFLICT");
+    }
+
+    const existingByName = await prisma.school.findFirst({
+      where: { name: { equals: normalizedName, mode: "insensitive" } },
+    });
+
+    if (existingByName) {
+      return sendError(res, 409, "School name already exists", "NAME_CONFLICT");
     }
 
     const school = await prisma.school.create({
-      data: { name, schoolCode, address },
+      data: {
+        name: normalizedName,
+        schoolCode: normalizedCode,
+        address: address ? address.trim() : null,
+      },
       include: {
         _count: {
           select: { students: true, staff: true },
@@ -22,10 +39,20 @@ export const createSchool = async (req, res) => {
       },
     });
 
-    res.status(201).json(school);
+    return sendSuccess(res, 201, school, "School created successfully");
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to create school" });
+    console.error("Create school error:", err);
+
+    if (err.code === "P2002") {
+      return sendError(
+        res,
+        409,
+        "Unique constraint violation (code or name)",
+        "DUPLICATE_ENTRY",
+      );
+    }
+
+    return sendError(res, 500, "Failed to create school", "INTERNAL_ERROR");
   }
 };
 
