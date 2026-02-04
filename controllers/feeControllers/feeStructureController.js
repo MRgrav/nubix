@@ -9,7 +9,7 @@ export const createFeeStructure = async (req, res) => {
       res,
       400,
       "className, categoryId, and amount are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
 
   try {
@@ -21,7 +21,7 @@ export const createFeeStructure = async (req, res) => {
           res,
           400,
           "No active academic year found",
-          "ACADEMIC_YEAR_MISSING"
+          "ACADEMIC_YEAR_MISSING",
         );
       resolvedAcademicYearId = activeYear.id;
     }
@@ -40,7 +40,7 @@ export const createFeeStructure = async (req, res) => {
       res,
       201,
       structure,
-      "Fee structure created successfully"
+      "Fee structure created successfully",
     );
   } catch (err) {
     console.error(err);
@@ -49,14 +49,14 @@ export const createFeeStructure = async (req, res) => {
         res,
         409,
         "Fee structure already exists for this combination",
-        "DUPLICATE_STRUCTURE"
+        "DUPLICATE_STRUCTURE",
       );
     }
     return sendError(
       res,
       500,
       "Failed to create fee structure",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -87,11 +87,58 @@ export const getFeeStructures = async (req, res) => {
       res,
       500,
       "Failed to fetch fee structures",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
-
+export const getFeeStructureReport = async (req, res) => {
+  const { academicYearId, className } = req.query;
+  if (!academicYearId) {
+    return sendError(
+      res,
+      400,
+      "academicYearId is required",
+      "VALIDATION_ERROR",
+    );
+  }
+  try {
+    const aggregates = await prisma.feeStructure.groupBy({
+      by: ["className", "streamId"],
+      where: {
+        academicYearId: Number(academicYearId),
+        ...(className && { className: className.trim() }),
+      },
+      _sum: { amount: true },
+      orderBy: { className: "asc" },
+    });
+    const enrichedAggregates = await Promise.all(
+      aggregates.map(async (agg) => ({
+        ...agg,
+        stream: agg.streamId
+          ? await prisma.stream.findUnique({
+              where: { id: agg.streamId },
+              select: { name: true },
+            })
+          : null,
+        totalAmount: agg._sum.amount,
+      })),
+    );
+    return sendSuccess(
+      res,
+      200,
+      enrichedAggregates,
+      "Fee structure report generated",
+    );
+  } catch (err) {
+    console.error(err);
+    return sendError(
+      res,
+      500,
+      "Failed to generate fee structure report",
+      "INTERNAL_ERROR",
+    );
+  }
+};
 export const updateFeeStructure = async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
@@ -121,7 +168,7 @@ export const updateFeeStructure = async (req, res) => {
       res,
       500,
       "Failed to update fee structure",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -145,7 +192,7 @@ export const lockFeeStructure = async (req, res) => {
       res,
       500,
       "Failed to lock fee structure",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };

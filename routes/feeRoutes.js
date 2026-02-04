@@ -21,12 +21,19 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// Fee Categories
+// ^ Fee Categories
 router.post(
   "/categories",
   authorize("ADMIN"),
   feeCategoryCtrl.createFeeCategory,
 );
+
+router.post(
+  "/categories/bulk",
+  authorize("ADMIN"),
+  feeCategoryCtrl.createBulkFeeCategories,
+);
+
 router.get("/categories", authorize("ADMIN"), feeCategoryCtrl.getFeeCategories);
 router.put(
   "/categories/:id",
@@ -39,7 +46,7 @@ router.delete(
   feeCategoryCtrl.deleteFeeCategory,
 );
 
-// Fee Structures
+// ^ Fee Structures
 router.post(
   "/structures",
   authorize("ADMIN"),
@@ -50,6 +57,12 @@ router.get(
   authorize("ADMIN"),
   feeStructureCtrl.getFeeStructures,
 );
+router.get(
+  "/structures/report",
+  authorize("ADMIN"),
+  feeStructureCtrl.getFeeStructureReport,
+);
+
 router.put(
   "/structures/:id",
   authorize("ADMIN"),
@@ -61,7 +74,7 @@ router.put(
   feeStructureCtrl.lockFeeStructure,
 );
 
-// Student Fees
+// ^ Student Fees
 router.post(
   "/student-fees",
   authorize("ADMIN"),
@@ -73,6 +86,11 @@ router.get(
   studentFeeCtrl.getStudentFee,
 );
 router.get(
+  "/my-fees",
+  authorize("STUDENT", "PARENT"),
+  studentFeeCtrl.getMyFees,
+);
+router.get(
   "/dues",
   authorize("ADMIN", "STAFF"),
   studentFeeCtrl.getOutstandingDues,
@@ -80,12 +98,12 @@ router.get(
 router.post("/payments", authorize("ADMIN"), studentFeeCtrl.recordPayment);
 router.post("/discounts", authorize("ADMIN"), studentFeeCtrl.applyDiscount);
 
-// Late Fees
+// ! Late Fees
 router.post("/late-fee-config", authorize("ADMIN"), createLateFeeConfig);
 router.get("/late-fee-config", authorize("ADMIN", "STAFF"), getLateFeeConfig);
 router.post("/late-fees", authorize("ADMIN"), applyLateFeeToStudent);
 
-// Transport
+// ! Transport
 router.post("/transport/routes", authorize("ADMIN"), createTransportRoute);
 router.get(
   "/transport/routes",
@@ -95,7 +113,7 @@ router.get(
 router.post("/transport/assign", authorize("ADMIN"), assignStudentTransport);
 router.post("/transport/opt-out", authorize("ADMIN"), optOutStudentTransport);
 
-// Fee Adjustments / Refunds
+// ! Fee Adjustments / Refunds
 router.post("/adjustments", authorize("ADMIN"), createFeeAdjustment);
 router.get("/adjustments", authorize("ADMIN", "STAFF"), getFeeAdjustments);
 

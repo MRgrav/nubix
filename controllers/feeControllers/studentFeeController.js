@@ -1,5 +1,7 @@
 import prisma from "../../models/prisma.js";
+import { getActiveAcademicYear } from "../../utils/academicYearHelper.js";
 import { sendSuccess, sendError } from "../../utils/responseStructure.js";
+
 export const assignStudentFee = async (req, res) => {
   const { studentId, academicYearId, feeStructureIds } = req.body; // Array of FeeStructure IDs
 
@@ -8,7 +10,7 @@ export const assignStudentFee = async (req, res) => {
       res,
       400,
       "studentId, academicYearId, and feeStructureIds (array) required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
 
@@ -22,7 +24,7 @@ export const assignStudentFee = async (req, res) => {
         res,
         404,
         "One or more fee structures not found",
-        "NOT_FOUND"
+        "NOT_FOUND",
       );
     }
 
@@ -78,7 +80,7 @@ export const assignStudentFee = async (req, res) => {
         res,
         409,
         "Student fee already assigned for this year",
-        "CONFLICT"
+        "CONFLICT",
       );
     sendError(res, 500, "Failed to assign student fee", "SERVER_ERROR");
   }
@@ -156,7 +158,7 @@ export const getOutstandingDues = async (req, res) => {
     sendSuccess(
       res,
       200,
-      fee || { dueAmount: 0, paidAmount: 0, totalAmount: 0 }
+      fee || { dueAmount: 0, paidAmount: 0, totalAmount: 0 },
     );
   } catch (err) {
     console.error(err);
@@ -171,7 +173,7 @@ export const recordPayment = async (req, res) => {
       res,
       400,
       "amount and method required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
 
   try {
@@ -186,7 +188,7 @@ export const recordPayment = async (req, res) => {
         res,
         400,
         "Cannot overpay frozen fee",
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
 
     const payment = await prisma.payment.create({
@@ -240,7 +242,7 @@ export const applyDiscount = async (req, res) => {
         res,
         403,
         "Cannot apply discount to frozen fee",
-        "FORBIDDEN"
+        "FORBIDDEN",
       );
 
     const discountAmount =
@@ -277,5 +279,112 @@ export const applyDiscount = async (req, res) => {
   } catch (err) {
     console.error(err);
     sendError(res, 500, "Failed to apply discount", "SERVER_ERROR");
+  }
+};
+
+export const getMyFees = async (req, res) => {
+  try {
+    let studentId;
+    if (req.user.role === "STUDENT") {
+      const student = await prisma.student.findUnique({
+        where: { userId: req.user.id },
+        select: { id: true },
+      });
+      if (!student)
+        return sendError(res, 404, "Student profile not found", "NOT_FOUND");
+      studentId = student.id;
+    } else if (req.user.role === "PARENT") {
+      studentId = req.user.actingAsStudentId;
+      if (!studentId)
+        return sendError(
+          res,
+          403,
+          "Please select a child first",
+          "CHILD_NOT_SELECTED",
+        );
+    }
+
+    let academicYearId = req.query.academicYearId;
+    if (!academicYearId) {
+      const activeYear = await getActiveAcademicYear(req.user.schoolId);
+      if (!activeYear)
+        return sendError(
+          res,
+          400,
+          "No active academic year found",
+          "ACADEMIC_YEAR_MISSING",
+        );
+      academicYearId = activeYear.id;
+    }
+
+    const fee = await prisma.studentFee.findUnique({
+      where: {
+        studentId_academicYearId: {
+          studentId: Number(studentId),
+          academicYearId: Number(academicYearId),
+        },
+      },
+      include: {
+        items: { include: { feeStructure: { include: { category: true } } } },
+        payments: true,
+        discounts: true,
+        adjustments: true,
+        lateFees: true,
+        academicYear: { select: { id: true, label: true } },
+      },
+    });
+
+    if (!fee)
+      return sendError(
+        res,
+        404,
+        "No fee records found for this year",
+        "NOT_FOUND",
+      );
+
+    // Compute additional fields
+    const percentagePaid =
+      fee.totalAmount > 0 ? (fee.paidAmount / fee.totalAmount) * 100 : 0;
+    const transport = await prisma.studentTransport.findUnique({
+      where: {
+        studentId_academicYearId: {
+          studentId: Number(studentId),
+          academicYearId: Number(academicYearId),
+        },
+      },
+      include: { route: true },
+    });
+
+    const response = {
+      academicYear: fee.academicYear,
+      summary: {
+        totalAmount: fee.totalAmount,
+        paidAmount: fee.paidAmount,
+        dueAmount: fee.dueAmount,
+        percentagePaid: parseFloat(percentagePaid.toFixed(2)),
+        lastPaymentDate: fee.lastPaymentDate,
+        isOverdue: fee.dueAmount > 0, // Add logic for grace periods if needed
+      },
+      items: fee.items.map((item) => ({
+        categoryName: item.feeStructure.category.name,
+        assignedAmount: item.assignedAmount,
+      })),
+      payments: fee.payments,
+      discounts: fee.discounts,
+      lateFees: fee.lateFees,
+      adjustments: fee.adjustments,
+      transport: transport
+        ? {
+            routeName: transport.route.name,
+            feeAmount: transport.route.feeAmount,
+            isActive: transport.isActive,
+          }
+        : null,
+    };
+
+    return sendSuccess(res, 200, response, "Fee details fetched successfully");
+  } catch (err) {
+    console.error(err);
+    return sendError(res, 500, "Failed to fetch fee details", "INTERNAL_ERROR");
   }
 };
