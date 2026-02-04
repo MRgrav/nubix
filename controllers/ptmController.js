@@ -29,8 +29,6 @@ export const formatPTMActionResponse = (ptm) => {
   return base;
 };
 
-
-
 // * Updated PTM Request controller
 export const requestPTM = async (req, res) => {
   const {
@@ -66,10 +64,12 @@ export const requestPTM = async (req, res) => {
       );
     }
 
-    // 2. Fetch student's current class & section
+    // 2. Fetch student's current class & section + user role
     const student = await prisma.student.findUnique({
       where: { id: parseInt(studentId) },
       select: {
+        id: true,
+        userId: true, // ← critical: get student's userId
         classroom: {
           select: { name: true, section: true },
         },
@@ -87,34 +87,50 @@ export const requestPTM = async (req, res) => {
       return sendError(res, 404, "Student not found", "NOT_FOUND");
     }
 
+    // Get student's role (always STUDENT, but we fetch it for validation)
+    const studentUser = await prisma.user.findUnique({
+      where: { id: student.userId },
+      select: { role: true },
+    });
+
+    if (!studentUser || studentUser.role !== "STUDENT") {
+      return sendError(
+        res,
+        400,
+        "Invalid student user role",
+        "VALIDATION_ERROR",
+      );
+    }
+
     const currentClassroom =
       student.studentStreams?.[0]?.classroom || student.classroom;
     const className = currentClassroom?.name || "Unknown";
     const section = currentClassroom?.section || null;
 
-    // 3. Fetch roles for requester and target
-    const requestedByRole = user.role; // already in token
-
+    // 3. Fetch recipient's role (requestedToId = user ID of teacher/staff)
     const targetUser = await prisma.user.findUnique({
       where: { id: parseInt(requestedToId) },
       select: { role: true },
     });
+
     if (!targetUser) {
       return sendError(res, 404, "Requested user not found", "NOT_FOUND");
     }
     const requestedToRole = targetUser.role;
 
-    // 4. Simple role restrictions
+    // 4. Role restrictions (compare requester with STUDENT, not with requestedTo)
     if (user.role !== "ADMIN") {
+      // Cannot request PTM to another user of same role as requester
       if (user.role === requestedToRole) {
         return sendError(
           res,
           400,
-          "Cannot request PTM to same role",
+          "Cannot request PTM to user of same role",
           "VALIDATION_ERROR",
         );
       }
 
+      // STUDENT or PARENT can only request STAFF/TEACHER
       if (
         (user.role === "STUDENT" || user.role === "PARENT") &&
         requestedToRole !== "STAFF"
@@ -127,7 +143,8 @@ export const requestPTM = async (req, res) => {
         );
       }
 
-      if (user.role === "STAFF" && requestedToRole !== "STUDENT") {
+      // STAFF can only request STUDENT (parents usually initiate)
+      if (user.role === "STAFF" && studentUser.role !== "STUDENT") {
         return sendError(
           res,
           400,
@@ -155,7 +172,7 @@ export const requestPTM = async (req, res) => {
       }
     }
 
-    // 6. Create PTM request (all required fields now filled)
+    // 6. Create PTM request
     const ptm = await prisma.pTMRequest.create({
       data: {
         studentId: parseInt(studentId),
@@ -167,10 +184,10 @@ export const requestPTM = async (req, res) => {
         purpose: purpose.trim() || null,
         status: "pending",
         academicYearId: activeYear.id,
-        class: className, // ← auto-filled
-        section, // ← auto-filled (nullable)
-        requestedByRole, // ← derived from user.role
-        requestedToRole, // ← derived from target user
+        class: className,
+        section,
+        requestedByRole: user.role,
+        requestedToRole,
       },
       include: {
         student: { select: { id: true, name: true } },
@@ -182,6 +199,7 @@ export const requestPTM = async (req, res) => {
     return sendSuccess(res, 201, ptm, "PTM request created successfully");
   } catch (err) {
     console.error("PTM request error:", err);
+
     if (err.code === "P2025") {
       return sendError(
         res,
@@ -190,6 +208,7 @@ export const requestPTM = async (req, res) => {
         "NOT_FOUND",
       );
     }
+
     return sendError(
       res,
       500,
