@@ -51,15 +51,12 @@ export const createSlot = async (req, res) => {
       resolvedAcademicYearId = activeYear.id;
     }
 
-    // Overlap check – consider both classroom AND stream
-    const overlap = await prisma.timetableSlot.findFirst({
+    // Primary check: same classroom overlap
+    const classroomOverlap = await prisma.timetableSlot.findFirst({
       where: {
         academicYearId: Number(resolvedAcademicYearId),
         day,
-        OR: [
-          { classroomId: classroomId ? Number(classroomId) : undefined },
-          { streamId: streamId ? Number(streamId) : undefined },
-        ],
+        classroomId: Number(classroomId),
         NOT: {
           OR: [
             { endMinutes: { lte: startMinutes } },
@@ -69,8 +66,36 @@ export const createSlot = async (req, res) => {
       },
     });
 
-    if (overlap) {
-      return sendError(res, 409, "Time slot overlaps with an existing slot");
+    if (classroomOverlap) {
+      return sendError(
+        res,
+        409,
+        "Time slot overlaps with existing slot in the same classroom",
+      );
+    }
+    // === Optional but recommended: same teacher overlap ===
+    if (teacherId) {
+      const teacherOverlap = await prisma.timetableSlot.findFirst({
+        where: {
+          academicYearId: Number(resolvedAcademicYearId),
+          day,
+          teacherId: Number(teacherId),
+          NOT: {
+            OR: [
+              { endMinutes: { lte: startMinutes } },
+              { startMinutes: { gte: endMinutes } },
+            ],
+          },
+        },
+      });
+
+      if (teacherOverlap) {
+        return sendError(
+          res,
+          409,
+          "Teacher is already assigned to another slot at the same time",
+        );
+      }
     }
 
     const slot = await prisma.timetableSlot.create({

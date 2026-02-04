@@ -9,7 +9,7 @@ export const createFeeCategory = async (req, res) => {
       res,
       400,
       "name and type are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
 
@@ -25,14 +25,14 @@ export const createFeeCategory = async (req, res) => {
         res,
         409,
         "Category name already exists",
-        "DUPLICATE_CATEGORY"
+        "DUPLICATE_CATEGORY",
       );
     }
     return sendError(
       res,
       500,
       "Failed to create fee category",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -49,7 +49,7 @@ export const getFeeCategories = async (req, res) => {
       res,
       200,
       categories,
-      "Fee categories fetched successfully"
+      "Fee categories fetched successfully",
     );
   } catch (err) {
     console.error(err);
@@ -57,7 +57,7 @@ export const getFeeCategories = async (req, res) => {
       res,
       500,
       "Failed to fetch fee categories",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -73,14 +73,15 @@ export const updateFeeCategory = async (req, res) => {
       return sendError(res, 404, "Category not found", "NOT_FOUND");
     }
 
-    if (category.isDefault) {
-      return sendError(
-        res,
-        403,
-        "Cannot update default category",
-        "FORBIDDEN_OPERATION"
-      );
-    }
+    // TODO: Uncomment to prevent updates to default categories
+    // if (category.isDefault) {
+    //   return sendError(
+    //     res,
+    //     403,
+    //     "Cannot update default category",
+    //     "FORBIDDEN_OPERATION"
+    //   );
+    // }
 
     const updated = await prisma.feeCategory.update({
       where: { id: parseInt(id) },
@@ -94,7 +95,7 @@ export const updateFeeCategory = async (req, res) => {
       res,
       500,
       "Failed to update fee category",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -116,7 +117,7 @@ export const deleteFeeCategory = async (req, res) => {
         res,
         403,
         "Cannot delete default category",
-        "FORBIDDEN_OPERATION"
+        "FORBIDDEN_OPERATION",
       );
     }
 
@@ -131,7 +132,55 @@ export const deleteFeeCategory = async (req, res) => {
       res,
       500,
       "Failed to delete fee category",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
+    );
+  }
+};
+
+export const createBulkFeeCategories = async (req, res) => {
+  const { categories } = req.body; // Expect array of { name, type, description, isDefault }
+  if (!Array.isArray(categories) || categories.length === 0) {
+    return sendError(
+      res,
+      400,
+      "categories must be a non-empty array",
+      "VALIDATION_ERROR",
+    );
+  }
+  try {
+    const createdCategories = await prisma.$transaction(
+      categories.map((cat) =>
+        prisma.feeCategory.create({
+          data: {
+            name: cat.name.trim(),
+            type: cat.type,
+            description: cat.description,
+            isDefault: cat.isDefault ?? false,
+          },
+        }),
+      ),
+    );
+    return sendSuccess(
+      res,
+      201,
+      createdCategories,
+      "Fee categories created successfully in bulk",
+    );
+  } catch (err) {
+    console.error(err);
+    if (err.code === "P2002") {
+      return sendError(
+        res,
+        409,
+        "One or more category names already exist",
+        "DUPLICATE_CATEGORY",
+      );
+    }
+    return sendError(
+      res,
+      500,
+      "Failed to create bulk fee categories",
+      "INTERNAL_ERROR",
     );
   }
 };

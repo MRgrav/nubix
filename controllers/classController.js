@@ -5,14 +5,18 @@ import { generateRollNo } from "../utils/rollNoGenerator.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
 
 export const createClassroom = async (req, res) => {
-  const { name, schoolId, section } = req.body;
-
-  if (!name || !schoolId) {
-    return res.status(400).json({
-      error: "name and schoolId are required",
-    });
-  }
   try {
+    const {
+      name,
+      schoolId,
+      section = "A",
+      isSubjectWiseAttendance = false,
+    } = req.body;
+
+    if (!name || !schoolId) {
+      return sendError(res, 400, "Name ans SchoolId are required", "NOT_FOUND");
+    }
+
     // Check if classroom with same name + section + school already exists
     const existingClass = await prisma.classroom.findFirst({
       where: {
@@ -23,18 +27,19 @@ export const createClassroom = async (req, res) => {
     });
 
     if (existingClass) {
-      return res.status(409).json({
-        error: `Class "${name} ${
-          section || "A"
-        }" already exists in this school`,
-      });
+      return sendError(
+        res,
+        409,
+        `Class "${name} ${section || "A"}" already exists in this school`,
+        "CONFLICT_ERROR",
+      );
     }
 
     const classroom = await prisma.classroom.create({
       data: {
         name: name.trim(),
         section: (section || "A").trim().toUpperCase(),
-        isSubjectWiseAttendance: req.body.isSubjectWiseAttendance || false,
+        isSubjectWiseAttendance: Boolean(isSubjectWiseAttendance),
         school: { connect: { id: parseInt(schoolId) } },
       },
       include: {
@@ -43,29 +48,65 @@ export const createClassroom = async (req, res) => {
         },
       },
     });
-    res.status(201).json(classroom);
+    return sendSuccess(res, 201, classroom, "Classromm Created Successfully");
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "Failed to create class" });
+    return sendError(res, 500, "Failed to create Classroom", "INTERNAL_ERROR");
   }
 };
 
 export const getClassrooms = async (req, res) => {
-  const { schoolId } = req.query;
+  const { schoolId, page = 1, limit = 60 } = req.query;
   try {
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
     const where = schoolId ? { schoolId: parseInt(schoolId) } : {};
+
+    const total = await prisma.classroom.count({ where });
     const classrooms = await prisma.classroom.findMany({
       where,
+      skip,
+      take: limitNum,
       include: {
         school: { select: { id: true, name: true, schoolCode: true } },
-        students: { select: { id: true, name: true } },
+        students: {
+          select: {
+            id: true,
+            name: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ name: "asc" }, { section: "asc" }],
     });
-    res.json({ classrooms });
+
+    const totalPages = Math.ceil(total / limitNum);
+    return sendSuccess(
+      res,
+      200,
+      classrooms,
+      "Classroom Details Fetched Successfully",
+      {
+        pagination: {
+          total,
+          totalPages,
+          currentPage: pageNum,
+          perPage: limitNum,
+          hasNext: pageNum < totalPages,
+          hasPrev: pageNum > 1,
+        },
+      },
+    );
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch classes" });
+    console.error("Get classrooms error:", err);
+    return sendError(res, 500, "Failed to fetch classrooms", "INTERNAL_ERROR");
   }
 };
 
@@ -86,10 +127,10 @@ export const getClassroom = async (req, res) => {
       },
     });
     if (!classroom) return res.status(404).json({ error: "Class not found" });
-    res.json(classroom);
+    return sendSuccess(res, 200, classroom, "Class");
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch class" });
+    console.error("Get classroom error:", err);
+    return sendError(res, 500, "Failed to fetch classroom", "INTERNAL_ERROR");
   }
 };
 
@@ -99,6 +140,20 @@ export const updateClassroom = async (req, res) => {
   const { name, section, schoolId } = req.body;
 
   try {
+    const classroomId = parseInt(id);
+    if (isNaN(classroomId)) {
+      return sendError(res, 400, "Invalid classroom ID", "INVALID_ID");
+    }
+
+    const existing = await prisma.classroom.findUnique({
+      where: { id: classroomId },
+      select: { id: true, name: true, section: true, schoolId: true },
+    });
+
+    if (!existing) {
+      return sendError(res, 404, "Classroom not found", "NOT_FOUND");
+    }
+
     const data = {};
     if (name) data.name = name.trim();
     if (section) data.section = section.trim().toUpperCase();
@@ -108,7 +163,7 @@ export const updateClassroom = async (req, res) => {
     }
 
     // Prevent duplicate name + section in same school
-    if (name || section) {
+    if (data.name || data.section) {
       const existing = await prisma.classroom.findFirst({
         where: {
           name: data.name || undefined,
@@ -119,11 +174,13 @@ export const updateClassroom = async (req, res) => {
       });
 
       if (existing) {
-        return res.status(409).json({
-          error: `Class "${data.name || name} ${
+        return sendError(
+          res,
+          409,
+          `Class "${data.name || name} ${
             data.section || section
           }" already exists`,
-        });
+        );
       }
     }
 
@@ -133,26 +190,62 @@ export const updateClassroom = async (req, res) => {
       include: { school: { select: { id: true, name: true } } },
     });
 
-    res.json(classroom);
+    return sendSuccess(res, 200, classroom, "Classroom Updated Successfully");
   } catch (err) {
     console.error(err);
     if (err.code === "P2025") {
-      return res.status(404).json({ error: "Classroom not found" });
+      return sendError(res, 404, "Classroom Not Found", "NOT_FOUND");
     }
-    res.status(500).json({ error: "Failed to update classroom" });
+    sendError(res, 500, "Failed to update classroom", "INTERNAL_ERROR");
   }
 };
 
 export const deleteClassroom = async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.classroom.delete({ where: { id: parseInt(id) } });
-    res.json({ message: "Classroom deleted successfully" });
+    const classroomId = parseInt(id);
+    if (isNaN(classroomId)) {
+      return sendError(res, 400, "Invalid classroom ID", "INVALID_ID");
+    }
+    // Fetch classroom to validate existence + school ownership
+    const classroom = await prisma.classroom.findUnique({
+      where: { id: classroomId },
+      select: {
+        id: true,
+        name: true,
+        section: true,
+        schoolId: true,
+      },
+    });
+
+    if (!classroom) {
+      return sendError(res, 404, "Classroom not found", "NOT_FOUND");
+    }
+
+    const studentCount = await prisma.student.count({
+      where: { classroomId },
+    });
+
+    if (studentCount > 0) {
+      return sendError(
+        res,
+        409,
+        `Cannot delete classroom "${classroom.name} ${classroom.section || ""}" — ${studentCount} student(s) are still enrolled`,
+        "CONFLICT",
+        { studentCount },
+      );
+    }
+
+    // Safe to delete — no students
+    await prisma.classroom.delete({
+      where: { id: classroomId },
+    });
+
+    return sendSuccess(res, 200, null, "Classroom deleted successfully");
   } catch (err) {
     console.error(err);
-    if (err.code === "P2025")
-      return res.status(404).json({ error: "Class not found" });
-    res.status(500).json({ error: "Failed to delete class" });
+    if (err.code === "P2025") return sendError(res, 404, "Classroom Not Found");
+    return sendError(res, 500, "Failed to delete class", "INTERNAL_ERROR");
   }
 };
 
@@ -161,11 +254,10 @@ export const addStudentToClass = async (req, res) => {
   const { classId } = req.params;
   const { studentId, forceTransfer = false } = req.body;
 
-  if (!studentId) {
-    return res.status(400).json({ error: "studentId is required" });
-  }
-
   try {
+    if (!studentId) {
+      return sendError(res, 400, "studentId is required", "VALIDATION_ERROR");
+    }
     // Validate classroom exists
     const targetClassroom = await prisma.classroom.findUnique({
       where: { id: parseInt(classId) },
@@ -173,9 +265,8 @@ export const addStudentToClass = async (req, res) => {
     });
 
     if (!targetClassroom) {
-      return res.status(404).json({ error: `Classroom ${classId} not found` });
+      return sendError(res, 404, "Classroom not found", "NOT_FOUND");
     }
-
     // Get student with current enrollment
     const student = await prisma.student.findUnique({
       where: { id: parseInt(studentId) },
@@ -183,7 +274,7 @@ export const addStudentToClass = async (req, res) => {
     });
 
     if (!student) {
-      return res.status(404).json({ error: "Student not found" });
+      return sendError(res, 404, "Student not found", "NOT_FOUND");
     }
 
     // Check if already in the target class
@@ -510,7 +601,7 @@ export const getStudentsInClass = async (req, res) => {
   }
 
   const { classId } = req.params;
-  const { page = 1, limit = 10, search } = req.query;
+  const { page = 1, limit = 60, search } = req.query;
 
   try {
     console.log(
@@ -572,7 +663,12 @@ export const getStudentsInClass = async (req, res) => {
           id: true,
           name: true,
           email: true,
-          grade: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+            },
+          },
         },
       }),
     ]);
@@ -653,7 +749,9 @@ export const setSubjectWiseAttendance = async (req, res) => {
     if (err.code === "P2025") {
       return res.status(404).json({ error: "Classroom not found" });
     }
-    res.status(500).json({ error: "Failed to update subject-wise attendance setting" });
+    res
+      .status(500)
+      .json({ error: "Failed to update subject-wise attendance setting" });
   }
 };
 
@@ -686,7 +784,9 @@ export const getClassesSubjectWiseSettings = async (req, res) => {
 
     // Group by subject-wise setting
     const withSubjectWise = classrooms.filter((c) => c.isSubjectWiseAttendance);
-    const withoutSubjectWise = classrooms.filter((c) => !c.isSubjectWiseAttendance);
+    const withoutSubjectWise = classrooms.filter(
+      (c) => !c.isSubjectWiseAttendance,
+    );
 
     res.json({
       total: classrooms.length,
@@ -702,6 +802,8 @@ export const getClassesSubjectWiseSettings = async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch classes subject-wise settings" });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch classes subject-wise settings" });
   }
 };
