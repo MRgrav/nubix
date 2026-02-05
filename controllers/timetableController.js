@@ -320,21 +320,29 @@ export const getMyStudentTimetable = async (req, res) => {
       select: {
         classroomId: true,
         streamId: true,
+        classroom: { select: { name: true, section: true } },
       },
     });
 
-    if (!enrollment) {
-      return sendSuccess(res, 200, [], "No active enrollment found");
+    if (!enrollment || !enrollment.classroomId) {
+      return sendSuccess(
+        res,
+        200,
+        {
+          slots: [],
+          groupedByDay: {},
+          academicYear: activeYear.label,
+          className: "Not enrolled",
+        },
+        "No active classroom enrollment found",
+      );
     }
 
     // 4. Fetch timetable slots for this classroom/stream
     const slots = await prisma.timetableSlot.findMany({
       where: {
         academicYearId: activeYear.id,
-        OR: [
-          { classroomId: enrollment.classroomId },
-          ...(enrollment.streamId ? [{ streamId: enrollment.streamId }] : []),
-        ],
+        classroomId: enrollment.classroomId,
       },
       include: {
         subject: { select: { id: true, name: true, code: true } },
@@ -362,6 +370,7 @@ export const getMyStudentTimetable = async (req, res) => {
             "0",
           )}:${(slot.endMinutes % 60).toString().padStart(2, "0")}`,
         subject: slot.subject?.name || "N/A",
+        subjectCode: slot.subject?.code || "",
         teacher: slot.teacher?.name || "N/A",
       });
       return acc;
@@ -374,6 +383,8 @@ export const getMyStudentTimetable = async (req, res) => {
         slots,
         groupedByDay,
         academicYear: activeYear.label,
+        className: enrollment.classroom.name,
+        section: enrollment.classroom.section,
       },
       "Your timetable fetched successfully",
     );
