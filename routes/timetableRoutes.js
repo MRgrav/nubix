@@ -9,6 +9,8 @@ import {
   getSlots,
   updateSlot,
   deleteSlot,
+  getMyStudentTimetable,
+  getMyTeacherSlots,
 } from "../controllers/timetableController.js";
 
 const router = express.Router();
@@ -21,6 +23,8 @@ router.post(
   timetableSlotCreateValidation,
   createSlot,
 );
+router.get("/student", authenticate, getMyStudentTimetable);
+router.get("/teacher", authenticate, getMyTeacherSlots);
 router.put(
   "/slots/:id",
   authenticate,
