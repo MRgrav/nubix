@@ -270,9 +270,12 @@ export const getMyStudentTimetable = async (req, res) => {
     if (user.role === "STUDENT") {
       const student = await prisma.student.findUnique({
         where: { userId: user.id },
-        select: { id: true },
+        select: { id: true, schoolId: true },
       });
       if (!student) return sendError(res, 404, "Student profile not found");
+      if (user.schoolId && student.schoolId !== user.schoolId) {
+        return sendError(res, 403, "Not authorized for this student");
+      }
       studentId = student.id;
     } else if (user.role === "PARENT") {
       const actingStudentId = user.actingAsStudentId;
@@ -280,6 +283,26 @@ export const getMyStudentTimetable = async (req, res) => {
         return sendError(res, 403, "No child selected", "CHILD_NOT_SELECTED");
       }
       studentId = actingStudentId;
+      // Verify actingStudentId belongs to this parent (defense in depth)
+      const link = await prisma.studentParent.findFirst({
+        where: {
+          parent: { userId: user.id },
+          studentId: actingStudentId,
+        },
+        select: { student: { select: { schoolId: true } } },
+      });
+
+      if (!link) {
+        return sendError(
+          res,
+          403,
+          "Not authorized for this student",
+          "FORBIDDEN",
+        );
+      }
+      if (user.schoolId && link.student.schoolId !== user.schoolId) {
+        return sendError(res, 403, "Not authorized for this student's school");
+      }
     } else {
       return sendError(res, 403, "Only students or parents can access this");
     }
