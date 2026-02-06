@@ -382,11 +382,11 @@ model Subject {
 }
 
 model Classroom {
-  id        Int      @id @default(autoincrement())
-  name      String
-  section   String   @default("A")
-  isSubjectWiseAttendance Boolean @default(false) // Dynamic: determines if this class needs subject-wise attendance
-  createdAt DateTime @default(now())
+  id                      Int      @id @default(autoincrement())
+  name                    String
+  section                 String   @default("A")
+  isSubjectWiseAttendance Boolean  @default(false) // Dynamic: determines if this class needs subject-wise attendance
+  createdAt               DateTime @default(now())
 
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
@@ -403,6 +403,7 @@ model Classroom {
   StudentStream  StudentStream[]
 
   teacherAssignments TeacherAssignment[]
+  announcements      Announcement[]      @relation("ClassroomAnnouncements")
 }
 
 enum ExaminationStatus {
@@ -570,8 +571,8 @@ model Announcement {
   link  String?
   media String?
 
-  targetClass   String?
-  targetSection String?
+  classroomId Int?
+  classroom   Classroom? @relation("ClassroomAnnouncements", fields: [classroomId], references: [id])
 
   isSuspended Boolean @default(false)
 
@@ -595,6 +596,7 @@ model Announcement {
   @@index([schoolId])
   @@index([schoolId, type])
   @@index([schoolId, isSuspended])
+  @@index([classroomId])
 }
 
 // PTM Schemas

@@ -1,7 +1,8 @@
 import prisma from "../models/prisma.js";
-
+import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { resolveAcademicYearId } from "../utils/resolveAcademicYear.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
+
 export const createAnnouncement = async (req, res) => {
   const {
     type,
@@ -9,8 +10,7 @@ export const createAnnouncement = async (req, res) => {
     description,
     link,
     media,
-    targetClass,
-    targetSection,
+    classroomId,
     streamId,
     schoolId,
     academicYearId,
@@ -21,7 +21,7 @@ export const createAnnouncement = async (req, res) => {
       res,
       401,
       "Invalid authentication context",
-      "UNAUTHORIZED"
+      "UNAUTHORIZED",
     );
   }
 
@@ -30,12 +30,11 @@ export const createAnnouncement = async (req, res) => {
       res,
       400,
       "schoolId, title, and type are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
 
   try {
-    // Resolve academic year
     let resolvedAcademicYearId;
     try {
       resolvedAcademicYearId = await resolveAcademicYearId({
@@ -46,14 +45,54 @@ export const createAnnouncement = async (req, res) => {
       return sendError(res, 400, err.message, "ACADEMIC_YEAR_ERROR");
     }
 
-    // Stream announcements only allowed for Class 11 and 12
-    if (streamId && targetClass && !["11", "12"].includes(targetClass.trim())) {
-      return sendError(
-        res,
-        400,
-        "Stream-specific announcements are only allowed for Class 11 and 12",
-        "INVALID_STREAM_SCOPE"
-      );
+    // Validate classroom belongs to school (if provided)
+    let classroom;
+
+    if (classroomId) {
+      classroom = await prisma.classroom.findUnique({
+        where: { id: Number(classroomId) },
+        select: {
+          schoolId: true,
+          name: true, // used to detect class 11 / 12
+        },
+      });
+
+      if (!classroom || classroom.schoolId !== Number(schoolId)) {
+        return sendError(
+          res,
+          400,
+          "Invalid or unauthorized classroom",
+          "VALIDATION_ERROR",
+        );
+      }
+
+      // ✅ Stream allowed ONLY for Class 11 & 12
+      const className = classroom.name.toString().toLowerCase();
+
+      const isClass11Or12 =
+        className === "11" ||
+        className === "12" ||
+        className.includes("11") ||
+        className.includes("12");
+
+      if (!isClass11Or12 && streamId) {
+        return sendError(
+          res,
+          400,
+          "Stream can only be assigned for Class 11 and 12",
+          "VALIDATION_ERROR",
+        );
+      }
+    }
+
+    if (streamId) {
+      const streamExists = await prisma.stream.findUnique({
+        where: { id: Number(streamId) },
+        select: { id: true },
+      });
+      if (!streamExists) {
+        return sendError(res, 404, "Stream not found", "NOT_FOUND");
+      }
     }
 
     const announcement = await prisma.announcement.create({
@@ -63,9 +102,10 @@ export const createAnnouncement = async (req, res) => {
         description: description?.trim(),
         link: link?.trim(),
         media: media?.trim(),
-        targetClass: targetClass?.trim(),
-        targetSection: targetSection?.trim().toUpperCase(),
-        ...(streamId && { stream: { connect: { id: Number(streamId) } } }),
+        classroom: classroomId
+          ? { connect: { id: Number(classroomId) } }
+          : undefined,
+        stream: streamId ? { connect: { id: Number(streamId) } } : undefined,
         school: { connect: { id: Number(schoolId) } },
         createdBy: { connect: { id: req.user.id } },
         createdByRole: req.user.role,
@@ -74,12 +114,11 @@ export const createAnnouncement = async (req, res) => {
       include: {
         academicYear: { select: { id: true, label: true } },
         stream: streamId ? { select: { id: true, name: true } } : undefined,
+        classroom: classroomId
+          ? { select: { id: true, name: true, section: true } }
+          : undefined,
         createdBy: {
-          select: {
-            id: true,
-            email: true,
-            role: true,
-          },
+          select: { id: true, email: true, role: true },
         },
       },
     });
@@ -88,7 +127,7 @@ export const createAnnouncement = async (req, res) => {
       res,
       201,
       announcement,
-      "Announcement created successfully"
+      "Announcement created successfully",
     );
   } catch (err) {
     console.error("Create announcement error:", err);
@@ -96,15 +135,15 @@ export const createAnnouncement = async (req, res) => {
       return sendError(
         res,
         404,
-        "School, stream, or academic year not found",
-        "NOT_FOUND"
+        "School, stream, classroom, or academic year not found",
+        "NOT_FOUND",
       );
     }
     return sendError(
       res,
       500,
       "Failed to create announcement",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -113,21 +152,18 @@ export const getAnnouncements = async (req, res) => {
   const {
     schoolId,
     type,
-    class: targetClass,
-    section,
-    academicYearId,
+    classroomId, // ← new: filter by classroom ID
     streamId,
+    academicYearId,
     page = 1,
     limit = 20,
   } = req.query;
 
-  const role = req.user.role;
-
   if (!schoolId) {
     return sendError(res, 400, "schoolId is required", "VALIDATION_ERROR");
   }
+
   try {
-    // Resolve academic year
     let resolvedAcademicYearId;
     try {
       resolvedAcademicYearId = await resolveAcademicYearId({
@@ -145,65 +181,18 @@ export const getAnnouncements = async (req, res) => {
     };
 
     if (type) where.type = type;
-    if (targetClass) where.targetClass = targetClass.trim();
-    if (section) where.targetSection = section.trim().toUpperCase();
+    if (classroomId) where.classroomId = Number(classroomId);
     if (streamId) where.streamId = Number(streamId);
 
-    // Parent visibility: global + their selected child's class/stream
-    if (role === "PARENT") {
-      const actingStudentId = req.user.actingAsStudentId;
-
-      if (!actingStudentId) {
-        return sendError(
-          res,
-          403,
-          "Please select a child first",
-          "CHILD_NOT_SELECTED"
-        );
-      }
-
-      // Fetch selected student's class/stream
-      const studentStream = await prisma.studentStream.findFirst({
-        where: {
-          studentId: actingStudentId,
-          academicYearId: Number(resolvedAcademicYearId),
-        },
-        include: {
-          classroom: { select: { name: true, section: true } },
-          stream: { select: { id: true } },
-        },
-      });
-
-      if (!studentStream) {
-        // No enrollment → only global
-        where.OR = [{ streamId: null }];
-      } else {
-        const className = studentStream.classroom.name;
-        const sectionName = studentStream.classroom.section;
-        const studentStreamId = studentStream.stream?.id;
-
-        where.OR = [
-          { streamId: null }, // global
-          { targetClass: className, targetSection: sectionName }, // class-specific
-          ...(studentStreamId ? [{ streamId: studentStreamId }] : []), // stream-specific
-        ];
-      }
-    } else if (role === "STUDENT") {
-      // Existing student logic (keep as-is)
-      const studentStream = await prisma.studentStream.findFirst({
-        where: {
-          student: { userId: req.user.id },
-          academicYearId: Number(resolvedAcademicYearId),
-        },
-        select: { streamId: true },
-      });
-
-      where.OR = [
-        { streamId: null },
-        ...(studentStream?.streamId
-          ? [{ streamId: studentStream.streamId }]
-          : []),
-      ];
+    // Role-based restrictions (optional — expand if needed)
+    const role = req.user.role;
+    if (role === "PARENT" || role === "STUDENT") {
+      return sendError(
+        res,
+        403,
+        "Use /my-announcements for student/parent view",
+        "FORBIDDEN",
+      );
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -213,6 +202,8 @@ export const getAnnouncements = async (req, res) => {
       prisma.announcement.count({ where }),
       prisma.announcement.findMany({
         where,
+        skip,
+        take,
         select: {
           id: true,
           type: true,
@@ -220,17 +211,13 @@ export const getAnnouncements = async (req, res) => {
           description: true,
           link: true,
           media: true,
-          targetClass: true,
-          targetSection: true,
           isSuspended: true,
           createdAt: true,
-
-          stream: {
-            select: { name: true },
+          classroom: {
+            select: { id: true, name: true, section: true },
           },
-          academicYear: {
-            select: { label: true },
-          },
+          stream: { select: { id: true, name: true } },
+          academicYear: { select: { label: true } },
           createdBy: {
             select: {
               role: true,
@@ -239,26 +226,248 @@ export const getAnnouncements = async (req, res) => {
           },
         },
         orderBy: { createdAt: "desc" },
-        skip,
-        take,
       }),
     ]);
 
-    return sendSuccess(res, 200, announcements, "Announcements fetched", {
-      total,
-      pages: Math.ceil(total / take),
-      currentPage: Number(page),
-      perPage: take,
-      hasNext: Number(page) < Math.ceil(total / take),
-      hasPrev: Number(page) > 1,
-    });
+    return sendSuccess(
+      res,
+      200,
+      announcements,
+      "Announcements fetched successfully",
+      {
+        total,
+        pages: Math.ceil(total / take),
+        currentPage: Number(page),
+        perPage: take,
+        hasNext: Number(page) < Math.ceil(total / take),
+        hasPrev: Number(page) > 1,
+      },
+    );
   } catch (err) {
     console.error("Get announcements error:", err);
     return sendError(
       res,
       500,
       "Failed to fetch announcements",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
+    );
+  }
+};
+
+// API For APP
+
+export const getMyAnnouncements = async (req, res) => {
+  const { type, page = 1, limit = 20 } = req.query;
+
+  const user = req.user;
+  const schoolId = user.schoolId;
+
+  if (!schoolId) {
+    return sendError(
+      res,
+      400,
+      "Unable to determine school context",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  try {
+    let resolvedAcademicYearId;
+    try {
+      resolvedAcademicYearId = (await getActiveAcademicYear(schoolId))?.id;
+      if (!resolvedAcademicYearId) {
+        return sendError(
+          res,
+          400,
+          "No active academic year found",
+          "ACADEMIC_YEAR_ERROR",
+        );
+      }
+    } catch (err) {
+      return sendError(res, 400, err.message, "ACADEMIC_YEAR_ERROR");
+    }
+
+    // Determine studentId + classroomId + streamId
+    let studentId, classroomId, streamId;
+
+    if (user.role === "STUDENT") {
+      const student = await prisma.student.findUnique({
+        where: { userId: user.id },
+        select: {
+          id: true,
+          schoolId: true,
+          studentStreams: {
+            where: { academicYearId: resolvedAcademicYearId },
+            take: 1,
+            include: {
+              classroom: { select: { id: true } },
+              stream: { select: { id: true } },
+            },
+          },
+        },
+      });
+
+      if (!student)
+        return sendError(res, 404, "Student profile not found", "NOT_FOUND");
+      if (user.schoolId && student.schoolId !== user.schoolId) {
+        return sendError(
+          res,
+          403,
+          "Not authorized for this student",
+          "FORBIDDEN",
+        );
+      }
+
+      studentId = student.id;
+      const enrollment = student.studentStreams?.[0];
+      classroomId = enrollment?.classroom?.id;
+      streamId = enrollment?.stream?.id;
+    } else if (user.role === "PARENT") {
+      const actingStudentId = user.actingAsStudentId;
+      if (!actingStudentId) {
+        return sendError(
+          res,
+          403,
+          "Please select a child first",
+          "CHILD_NOT_SELECTED",
+        );
+      }
+      studentId = actingStudentId;
+
+      const link = await prisma.studentParent.findFirst({
+        where: {
+          parent: { userId: user.id },
+          studentId: actingStudentId,
+        },
+        select: {
+          student: {
+            select: {
+              schoolId: true,
+              studentStreams: {
+                where: { academicYearId: resolvedAcademicYearId },
+                take: 1,
+                include: {
+                  classroom: { select: { id: true } },
+                  stream: { select: { id: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!link)
+        return sendError(
+          res,
+          403,
+          "Not authorized for this student",
+          "FORBIDDEN",
+        );
+      if (user.schoolId && link.student.schoolId !== user.schoolId) {
+        return sendError(
+          res,
+          403,
+          "Not authorized for this student's school",
+          "FORBIDDEN",
+        );
+      }
+
+      const enrollment = link.student.studentStreams?.[0];
+      classroomId = enrollment?.classroom?.id;
+      streamId = enrollment?.stream?.id;
+    } else {
+      return sendError(
+        res,
+        403,
+        "Only students or parents can access this",
+        "FORBIDDEN",
+      );
+    }
+
+    if (!classroomId) {
+      return sendSuccess(
+        res,
+        200,
+        [],
+        "No class enrollment found for announcements",
+        {
+          total: 0,
+          pages: 0,
+          currentPage: 1,
+          perPage: Number(limit),
+        },
+      );
+    }
+
+    // Filter: announcements for this classroom OR this stream
+    const where = {
+      schoolId: Number(schoolId),
+      academicYearId: Number(resolvedAcademicYearId),
+      isSuspended: false,
+      OR: [
+        { classroomId: Number(classroomId) },
+        ...(streamId ? [{ streamId: Number(streamId) }] : []),
+      ],
+    };
+
+    if (type) where.type = type;
+
+    const pageNum = Math.max(1, Number(page));
+    const limitNum = Math.min(100, Math.max(1, Number(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [total, announcements] = await prisma.$transaction([
+      prisma.announcement.count({ where }),
+      prisma.announcement.findMany({
+        where,
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          description: true,
+          link: true,
+          media: true,
+          isSuspended: true,
+          createdAt: true,
+          classroom: {
+            select: { id: true, name: true, section: true },
+          },
+          stream: { select: { id: true, name: true } },
+          academicYear: { select: { label: true } },
+          createdBy: {
+            select: {
+              role: true,
+              staff: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    return sendSuccess(
+      res,
+      200,
+      announcements,
+      "Relevant announcements fetched successfully",
+      {
+        total,
+        pages: Math.ceil(total / limitNum),
+        currentPage: pageNum,
+        perPage: limitNum,
+        hasNext: pageNum < Math.ceil(total / limitNum),
+        hasPrev: pageNum > 1,
+      },
+    );
+  } catch (err) {
+    console.error("Get my announcements error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to fetch announcements",
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -268,9 +477,11 @@ export const getAnnouncement = async (req, res) => {
     res,
     200,
     req.announcement,
-    "Announcement fetched successfully"
+    "Announcement fetched successfully",
   );
 };
+
+// UPDATE Announ
 
 export const updateAnnouncement = async (req, res) => {
   const {
@@ -278,10 +489,9 @@ export const updateAnnouncement = async (req, res) => {
     description,
     link,
     media,
-    targetClass,
-    targetSection,
-    academicYearId,
+    classroomId,
     streamId,
+    academicYearId,
   } = req.body;
 
   try {
@@ -290,12 +500,11 @@ export const updateAnnouncement = async (req, res) => {
     if (description !== undefined) data.description = description?.trim();
     if (link !== undefined) data.link = link?.trim();
     if (media !== undefined) data.media = media?.trim();
-    if (targetClass !== undefined) data.targetClass = targetClass?.trim();
-    if (targetSection !== undefined)
-      data.targetSection = targetSection?.trim().toUpperCase();
 
-    if (academicYearId) {
-      data.academicYear = { connect: { id: Number(academicYearId) } };
+    if (classroomId !== undefined) {
+      data.classroom = classroomId
+        ? { connect: { id: Number(classroomId) } }
+        : { disconnect: true };
     }
 
     if (streamId !== undefined) {
@@ -304,12 +513,17 @@ export const updateAnnouncement = async (req, res) => {
         : { disconnect: true };
     }
 
+    if (academicYearId) {
+      data.academicYear = { connect: { id: Number(academicYearId) } };
+    }
+
     const updated = await prisma.announcement.update({
       where: { id: req.announcement.id },
       data,
       include: {
         academicYear: { select: { id: true, label: true } },
         stream: { select: { id: true, name: true } },
+        classroom: { select: { id: true, name: true, section: true } },
       },
     });
 
@@ -323,18 +537,19 @@ export const updateAnnouncement = async (req, res) => {
       res,
       500,
       "Failed to update announcement",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
 
+// SUSPEND Event Announ
 export const suspendEvent = async (req, res) => {
   if (req.announcement.type !== "event") {
     return sendError(
       res,
       400,
       "Only events can be suspended",
-      "INVALID_OPERATION"
+      "INVALID_OPERATION",
     );
   }
 
@@ -346,6 +561,7 @@ export const suspendEvent = async (req, res) => {
   return sendSuccess(res, 200, updated, "Event suspended successfully");
 };
 
+// DELETE Announ
 export const deleteAnnouncement = async (req, res) => {
   await prisma.announcement.delete({
     where: { id: req.announcement.id },
