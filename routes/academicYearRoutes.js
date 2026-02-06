@@ -10,7 +10,12 @@ import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-router.get("/", authenticate, authorize("ADMIN"), getAcademicYears);
+router.get(
+  "/",
+  authenticate,
+  authorize("ADMIN", "STAFF", "STUDENT", "PARENT"),
+  getAcademicYears,
+);
 router.post("/", authenticate, authorize("ADMIN"), createAcademicYear);
 router.get("/:id", authenticate, getAcademicYear);
 router.put("/:id", authenticate, authorize("ADMIN"), updateAcademicYear);

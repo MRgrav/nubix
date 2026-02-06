@@ -1,5 +1,4 @@
 import prisma from "../models/prisma.js";
-import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
 
 export const createAcademicYear = async (req, res) => {
@@ -10,7 +9,7 @@ export const createAcademicYear = async (req, res) => {
       res,
       400,
       "label, startDate, and endDate are required",
-      "VALIDATION_ERROR"
+      "VALIDATION_ERROR",
     );
   }
   try {
@@ -33,7 +32,7 @@ export const createAcademicYear = async (req, res) => {
       res,
       201,
       academicYear,
-      "Academic year created successfully"
+      "Academic year created successfully",
     );
   } catch (err) {
     console.error(err);
@@ -42,14 +41,14 @@ export const createAcademicYear = async (req, res) => {
         res,
         409,
         "Academic year label already exists",
-        "DUPLICATE_LABEL"
+        "DUPLICATE_LABEL",
       );
     }
     return sendError(
       res,
       500,
       "Failed to create academic year",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -72,7 +71,7 @@ export const getAcademicYears = async (req, res) => {
       res,
       500,
       "Failed to fetch academic years",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -96,7 +95,7 @@ export const getAcademicYear = async (req, res) => {
       res,
       500,
       "Failed to fetch academic year",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -132,7 +131,7 @@ export const updateAcademicYear = async (req, res) => {
       res,
       200,
       academicYear,
-      "Academic year updated successfully"
+      "Academic year updated successfully",
     );
   } catch (err) {
     console.error(err);
@@ -143,7 +142,7 @@ export const updateAcademicYear = async (req, res) => {
       res,
       500,
       "Failed to update academic year",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
@@ -166,7 +165,7 @@ export const deleteAcademicYear = async (req, res) => {
       res,
       500,
       "Failed to delete academic year",
-      "INTERNAL_ERROR"
+      "INTERNAL_ERROR",
     );
   }
 };
