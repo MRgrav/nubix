@@ -134,6 +134,58 @@ export const getClassroom = async (req, res) => {
   }
 };
 
+// APP API feo class name,id,section
+export const getClassesDropdown = async (req, res) => {
+  const { search, limit = 100 } = req.query;
+
+  try {
+    const schoolId = req.user.schoolId;
+
+    if (!schoolId) {
+      return sendError(res, 400, "School context missing", "VALIDATION_ERROR");
+    }
+
+    const where = {
+      schoolId: Number(schoolId),
+    };
+
+    // Optional search: name or section
+    if (search?.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm, mode: "insensitive" } },
+        { section: { contains: searchTerm, mode: "insensitive" } },
+      ];
+    }
+
+    const classrooms = await prisma.classroom.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        section: true,
+      },
+      orderBy: [{ name: "asc" }, { section: "asc" }],
+      take: Math.min(Number(limit), 200), // cap at 200 for safety
+    });
+
+    // Format for dropdown (optional displayName for easy frontend use)
+    const formatted = classrooms.map((cls) => ({
+      id: cls.id,
+      name: cls.name,
+      section: cls.section || null,
+      displayName: cls.section ? `${cls.name} - ${cls.section}` : cls.name,
+    }));
+
+    return sendSuccess(res, 200, formatted, "Classes fetched for dropdown", {
+      total: formatted.length,
+    });
+  } catch (err) {
+    console.error("Get classes dropdown error:", err);
+    return sendError(res, 500, "Failed to fetch classes", "INTERNAL_ERROR");
+  }
+};
+
 // UPDATE CLASSROOM
 export const updateClassroom = async (req, res) => {
   const { id } = req.params;
