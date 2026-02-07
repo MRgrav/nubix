@@ -23,6 +23,11 @@ router.get(
   authorize("STUDENT", "PARENT"),
   getMyAnnouncements,
 );
+router.get(
+  "/announcements/universal",
+  authorize("STUDENT", "PARENT"),
+  getUniversalAnnouncements,
+);
 router.get("/:id", loadAnnouncement, getAnnouncement);
 
 router.post("/", announcementPermission, createAnnouncement);
