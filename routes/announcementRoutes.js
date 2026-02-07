@@ -7,6 +7,7 @@ import {
   deleteAnnouncement,
   suspendEvent,
   getMyAnnouncements,
+  getUniversalAnnouncements,
 } from "../controllers/announcementController.js";
 
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
