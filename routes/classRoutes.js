@@ -12,6 +12,7 @@ import {
   getStudentsInClass,
   setSubjectWiseAttendance,
   getClassesSubjectWiseSettings,
+  getClassesDropdown,
 } from "../controllers/classController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 const router = express.Router();
@@ -26,6 +27,7 @@ router.get(
   authorize("ADMIN"),
   getClassesSubjectWiseSettings,
 );
+router.get("/dropdown", getClassesDropdown);
 
 router.get("/:id", authorize("ADMIN", "STAFF"), getClassroom);
 router.put("/:id", authorize("ADMIN", "STAFF"), updateClassroom);
