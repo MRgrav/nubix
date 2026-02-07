@@ -472,6 +472,108 @@ export const getMyAnnouncements = async (req, res) => {
   }
 };
 
+// New endpoint: /api/announcements/universal
+export const getUniversalAnnouncements = async (req, res) => {
+  const { type, page = 1, limit = 20 } = req.query;
+
+  const user = req.user;
+  const schoolId = user.schoolId;
+
+  if (!schoolId) {
+    return sendError(
+      res,
+      400,
+      "Unable to determine school context",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  try {
+    let resolvedAcademicYearId;
+    try {
+      resolvedAcademicYearId = (await getActiveAcademicYear(schoolId))?.id;
+      if (!resolvedAcademicYearId) {
+        return sendError(
+          res,
+          400,
+          "No active academic year found",
+          "ACADEMIC_YEAR_ERROR",
+        );
+      }
+    } catch (err) {
+      return sendError(res, 400, err.message, "ACADEMIC_YEAR_ERROR");
+    }
+
+    const where = {
+      schoolId: Number(schoolId),
+      academicYearId: Number(resolvedAcademicYearId),
+      isSuspended: false,
+      classroomId: null,
+      streamId: null,
+    };
+
+    if (type) where.type = type;
+
+    const pageNum = Math.max(1, Number(page));
+    const limitNum = Math.min(100, Math.max(1, Number(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [total, announcements] = await prisma.$transaction([
+      prisma.announcement.count({ where }),
+      prisma.announcement.findMany({
+        where,
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          description: true,
+          link: true,
+          media: true,
+          isSuspended: true,
+          createdAt: true,
+          classroom: {
+            select: { id: true, name: true, section: true },
+          },
+          stream: { select: { id: true, name: true } },
+          academicYear: { select: { label: true } },
+          createdBy: {
+            select: {
+              role: true,
+              staff: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    return sendSuccess(
+      res,
+      200,
+      announcements,
+      "Universal announcements fetched successfully",
+      {
+        total,
+        pages: Math.ceil(total / limitNum),
+        currentPage: pageNum,
+        perPage: limitNum,
+        hasNext: pageNum < Math.ceil(total / limitNum),
+        hasPrev: pageNum > 1,
+      },
+    );
+  } catch (err) {
+    console.error("Get universal announcements error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to fetch universal announcements",
+      "INTERNAL_ERROR",
+    );
+  }
+};
+
 export const getAnnouncement = async (req, res) => {
   return sendSuccess(
     res,
