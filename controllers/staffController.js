@@ -383,6 +383,7 @@ export const getMinimalTeachers = async (req, res) => {
         userId: true,
         name: true,
         email: true,
+        designation: true,
       },
       orderBy: { name: "asc" },
       take: Math.min(parseInt(limit) || 100, 500),
