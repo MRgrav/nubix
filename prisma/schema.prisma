@@ -41,6 +41,7 @@ model AcademicYear {
   lateFeeConfigs         LateFeeConfig[]
   studentTransports      StudentTransport[]
   studentElectiveChoices StudentElectiveChoice[]
+  admissionRequests      AdmissionRequest[]
 
   @@index([isActive])
   @@index([startDate, endDate])
@@ -109,6 +110,7 @@ model School {
   timetableSlots     TimetableSlot[]
   announcements      Announcement[]      @relation("SchoolAnnouncements")
   curriculumSubjects CurriculumSubject[]
+  admissionRequests  AdmissionRequest[]
 }
 
 enum AssignmentStatus {
@@ -203,6 +205,7 @@ model Student {
   parents StudentParent[]
 
   studentElectiveChoices StudentElectiveChoice[]
+  admissionRequest       AdmissionRequest?
 }
 
 model Staff {
@@ -322,6 +325,8 @@ model User {
   teacherAssignmentsAssigned TeacherAssignment[]     @relation
   approvedElectiveChoices    StudentElectiveChoice[] @relation("ElectiveApprovedBy")
   parent                     Parent?
+  createdAdmissions          AdmissionRequest[]      @relation("CreatedAdmissions")
+  approvedAdmissions         AdmissionRequest[]      @relation("ApprovedAdmissions")
 }
 
 model Attendance {
@@ -1047,4 +1052,56 @@ model StudentElectiveChoice {
   @@unique([studentId, academicYearId, curriculumSubjectId])
   @@index([studentId, academicYearId])
   @@index([curriculumSubjectId])
+}
+
+model AdmissionRequest {
+  id                   Int             @id @default(autoincrement())
+  name                 String
+  email                String          @unique //student_email
+  gender               Gender?
+  dateOfBirth          DateTime?
+  previousSchoolName   String?
+  previousClass        String?
+  previousGrade        String?
+  promotedToClass      String?
+  totalAdmissionAmount Float?
+  monthlyFees          Float?
+  admissionDate        DateTime?
+  admissionReceiptNo   String?
+  admissionReceiptLink String? // URL to receipt/document
+  parents              Json? // [{type, name, email, phone, ...}]
+  electiveSubjects     Json? // [subjectId, ...]
+  requestedClassroomId Int?
+  requestedStreamId    Int?
+  status               AdmissionStatus @default(PENDING)
+  notes                String? // Admin internal notes
+  schoolId             Int
+  academicYearId       Int?
+  createdById          Int? // if submitted by logged-in user
+  approvedById         Int? // admin who approved
+  studentId            Int?            @unique
+  student              Student?        @relation(fields: [studentId], references: [id])
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  school       School        @relation(fields: [schoolId], references: [id])
+  academicYear AcademicYear? @relation(fields: [academicYearId], references: [id])
+  createdBy    User?         @relation("CreatedAdmissions", fields: [createdById], references: [id])
+  approvedBy   User?         @relation("ApprovedAdmissions", fields: [approvedById], references: [id])
+
+  @@index([schoolId, status])
+  @@index([academicYearId])
+  @@index([status])
+}
+
+enum AdmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
 }
