@@ -278,6 +278,7 @@ model Staff {
   timetableSlots TimetableSlot[]
 
   teacherAssignments TeacherAssignment[]
+  examinationPermissions ExaminationPermission[]
 }
 
 enum Role {
@@ -412,6 +413,11 @@ enum ExaminationStatus {
   CANCELLED
 }
 
+enum MarkingSystem {
+  MARKS
+  GRADE
+}
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -436,6 +442,7 @@ model Examination {
   duration    Int // duration in minutes
   totalMarks  Float
   status      ExaminationStatus @default(SCHEDULED)
+  markingSystem MarkingSystem   @default(MARKS)
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
@@ -446,6 +453,7 @@ model Examination {
   classroomId Int
 
   results ExaminationResult[]
+  permissions ExaminationPermission[]
 
   academicYearId Int
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
@@ -456,9 +464,24 @@ model Examination {
   @@index([examDate])
 }
 
+model ExaminationPermission {
+  id            Int      @id @default(autoincrement())
+  examination   Examination @relation(fields: [examinationId], references: [id], onDelete: Cascade)
+  examinationId Int
+  staff         Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId       Int
+  canAddMarks   Boolean  @default(true)
+  assignedAt    DateTime @default(now())
+
+  @@unique([examinationId, staffId])
+  @@index([examinationId])
+  @@index([staffId])
+}
+
 model ExaminationResult {
   id            Int      @id @default(autoincrement())
-  marksObtained Float
+  marksObtained Float?
+  grade         String?
   remarks       String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

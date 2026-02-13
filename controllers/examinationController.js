@@ -12,6 +12,7 @@ export const createExamination = async (req, res) => {
     schoolId,
     classroomId,
     academicYearId,
+    markingSystem, // Added markingSystem
   } = req.body;
   try {
     let resolvedAcademicYearId = academicYearId;
@@ -30,6 +31,7 @@ export const createExamination = async (req, res) => {
         examDate: new Date(examDate),
         duration,
         totalMarks,
+        markingSystem: markingSystem || "MARKS", // Default to MARKS
         school: { connect: { id: parseInt(schoolId) } },
         classroom: { connect: { id: parseInt(classroomId) } },
         academicYear: { connect: { id: parseInt(resolvedAcademicYearId) } },
@@ -44,9 +46,11 @@ export const createExamination = async (req, res) => {
 };
 
 export const getExaminations = async (req, res) => {
-  const { schoolId, classroomId, academicYearId } = req.query;
+  const { schoolId, classroomId, academicYearId, page = 1, limit = 10 } = req.query;
+
   try {
     let resolvedAcademicYearId = academicYearId;
+
     if (!resolvedAcademicYearId && schoolId) {
       const activeYear = await getActiveAcademicYear(parseInt(schoolId));
       resolvedAcademicYearId = activeYear?.id;
@@ -57,25 +61,45 @@ export const getExaminations = async (req, res) => {
         academicYearId: parseInt(resolvedAcademicYearId),
       }),
     };
+
     if (schoolId) where.schoolId = parseInt(schoolId);
     if (classroomId) where.classroomId = parseInt(classroomId);
 
-    const examinations = await prisma.examination.findMany({
-      where,
-      include: {
-        school: true,
-        classroom: true,
-        academicYear: true,
-        results: true,
+    const pageNumber = parseInt(page);
+    const pageSize = parseInt(limit);
+    const skip = (pageNumber - 1) * pageSize;
+
+    const [examinations, total] = await Promise.all([
+      prisma.examination.findMany({
+        where,
+        include: {
+          school: true,
+          classroom: true,
+          academicYear: true,
+          results: true,
+        },
+        orderBy: { examDate: "asc" },
+        skip,
+        take: pageSize,
+      }),
+      prisma.examination.count({ where }),
+    ]);
+
+    res.json({
+      examinations,
+      pagination: {
+        total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
       },
-      orderBy: { examDate: "asc" },
     });
-    res.json({ examinations });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch examinations" });
   }
 };
+
 
 export const getExamination = async (req, res) => {
   const { id } = req.params;
@@ -140,20 +164,56 @@ export const deleteExamination = async (req, res) => {
 };
 
 export const addExaminationResult = async (req, res) => {
-  const { examinationId, studentId, marksObtained, remarks, academicYearId } =
+  const { examinationId, studentId, marksObtained, grade, remarks, academicYearId } =
     req.body;
+  const { userId, role } = req.user; // Assuming req.user is populated by authenticate middleware
+
   try {
+    const exam = await prisma.examination.findUnique({
+      where: { id: parseInt(examinationId) },
+      include: { permissions: true }
+    });
+
+    if (!exam) return res.status(404).json({ error: "Examination not found" });
+
+    // Check permission
+    if (role === "STAFF") {
+      const staff = await prisma.staff.findUnique({
+        where: { userId: userId }
+      });
+
+      if (!staff) return res.status(403).json({ error: "Staff record not found" });
+
+      const hasPermission = exam.permissions.some(
+        p => p.staffId === staff.id && p.canAddMarks
+      );
+
+      if (!hasPermission) {
+        return res.status(403).json({ 
+          error: "You do not have permission to add marks for this examination. Please contact admin." 
+        });
+      }
+    } else if (role !== "ADMIN") {
+      return res.status(403).json({ error: "Only admin and authorized staff can add results" });
+    }
+
+    // Validate based on marking system
+    if (exam.markingSystem === "MARKS" && marksObtained === undefined) {
+      return res.status(400).json({ error: "marksObtained is required for this examination" });
+    }
+    if (exam.markingSystem === "GRADE" && !grade) {
+      return res.status(400).json({ error: "grade is required for this examination" });
+    }
+
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
-      const exam = await prisma.examination.findUnique({
-        where: { id: parseInt(examinationId) },
-      });
       resolvedAcademicYearId = exam.academicYearId;
     }
 
     const result = await prisma.examinationResult.create({
       data: {
-        marksObtained,
+        marksObtained: marksObtained !== undefined ? parseFloat(marksObtained) : null,
+        grade: grade || null,
         remarks,
         examination: { connect: { id: parseInt(examinationId) } },
         student: { connect: { id: parseInt(studentId) } },
@@ -167,6 +227,64 @@ export const addExaminationResult = async (req, res) => {
     if (err.code === "P2002")
       return res.status(400).json({ error: "Result already exists" });
     res.status(500).json({ error: "Failed to add result" });
+  }
+};
+
+/**
+ * Grant or revoke examination permission for a staff member
+ */
+export const updateExaminationPermission = async (req, res) => {
+  const { examinationId, staffId, canAddMarks } = req.body;
+  
+  // Only ADMIN can manage permissions
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Only admins can manage examination permissions" });
+  }
+
+  try {
+    const permission = await prisma.examinationPermission.upsert({
+      where: {
+        examinationId_staffId: {
+          examinationId: parseInt(examinationId),
+          staffId: parseInt(staffId)
+        }
+      },
+      update: {
+        canAddMarks: !!canAddMarks
+      },
+      create: {
+        examinationId: parseInt(examinationId),
+        staffId: parseInt(staffId),
+        canAddMarks: !!canAddMarks
+      }
+    });
+
+    res.json({ message: "Permission updated successfully", permission });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update permission" });
+  }
+};
+
+/**
+ * Get all permissions for a specific examination
+ */
+export const getExaminationPermissions = async (req, res) => {
+  const { examinationId } = req.params;
+  
+  try {
+    const permissions = await prisma.examinationPermission.findMany({
+      where: { examinationId: parseInt(examinationId) },
+      include: {
+        staff: {
+          select: { id: true, name: true, employeeId: true, role: true }
+        }
+      }
+    });
+    res.json({ permissions });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch permissions" });
   }
 };
 

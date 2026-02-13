@@ -9,7 +9,9 @@ import {
   getStudentExaminationResults,
   getExaminationResult,
   deleteExaminationResult,
-  getExaminationStats
+  getExaminationStats,
+  updateExaminationPermission,
+  getExaminationPermissions
 } from '../controllers/examinationController.js';
 import { authenticate, authorize } from '../middlewares/authMiddleware.js';
 
@@ -30,5 +32,9 @@ router.delete('/result/:resultId', authenticate, authorize('ADMIN', 'STAFF'), de
 
 // Statistics route
 router.get('/:examinationId/stats', authenticate, authorize('ADMIN', 'STAFF'), getExaminationStats);
+
+// Permission management routes
+router.post('/permissions/update', authenticate, authorize('ADMIN'), updateExaminationPermission);
+router.get('/:examinationId/permissions', authenticate, authorize('ADMIN'), getExaminationPermissions);
 
 export default router;
