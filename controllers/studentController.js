@@ -99,6 +99,7 @@ export const createStudent = async (req, res) => {
     const validated = createStudentSchema.parse(req.body);
 
     const {
+      title,
       name,
       email,
       gender,
@@ -119,6 +120,10 @@ export const createStudent = async (req, res) => {
       streamId,
       rollNo,
       parents,
+      city,
+      state,
+      pincode,
+      address
     } = validated;
 
     if (classroomId && streamId) {
@@ -185,6 +190,7 @@ export const createStudent = async (req, res) => {
       // 2. Create Student profile
       const student = await tx.student.create({
         data: {
+          title,
           name: name.trim(),
           email,
           gender,
@@ -203,6 +209,10 @@ export const createStudent = async (req, res) => {
           admissionReceiptLink,
           school: { connect: { id: parseInt(schoolId) } },
           user: { connect: { id: user.id } },
+          city,
+          state,
+          pincode,
+          address,
         },
         include: {
           school: { select: { id: true, name: true, schoolCode: true } },
@@ -719,6 +729,7 @@ export const getStudent = async (req, res) => {
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
   const {
+    title,
     name,
     email,
     grade,
@@ -736,6 +747,10 @@ export const updateStudent = async (req, res) => {
     schoolId,
     classroomId,
     subjectIds,
+    city,
+      state,
+      pincode,
+      address
   } = req.body;
 
   try {
@@ -761,6 +776,11 @@ export const updateStudent = async (req, res) => {
       admissionReceiptNo,
       admissionReceiptLink,
       school: schoolId ? { connect: { id: parseInt(schoolId) } } : undefined,
+      title,
+      city,
+      state,
+      pincode,
+      address,
     };
 
     // Classroom handling (replace / remove)
