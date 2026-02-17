@@ -633,10 +633,76 @@ export const getStudents = async (req, res) => {
 
 export const getStudent = async (req, res) => {
   const { id } = req.params;
+  const requestedStudentId = Number(id);
+
+  if (isNaN(requestedStudentId)) {
+    return sendError(res, 400, "Invalid student id", "INVALID_ID");
+  }
 
   try {
+    // 1. Fetch the requested student (minimal fields first for auth check)
+    const requestedStudent = await prisma.student.findUnique({
+      where: { id: requestedStudentId },
+      select: {
+        id: true,
+        userId: true,
+        schoolId: true,
+      },
+    });
+
+    if (!requestedStudent) {
+      return sendError(res, 404, "Student not found", "NOT_FOUND");
+    }
+
+    const user = req.user;
+
+    if (user.role === "STUDENT") {
+      const ownStudent = await prisma.student.findUnique({
+        where: { userId: user.userId },
+        select: { id: true },
+      });
+
+      if (!ownStudent || ownStudent.id !== requestedStudentId) {
+        return sendError(
+          res,
+          403,
+          "You can only view your own profile",
+          "FORBIDDEN",
+        );
+      }
+    }
+
+    // PARENT → actingAsStudentId OR verified child
+    else if (user.role === "PARENT") {
+      const actingStudentId = user.actingAsStudentId;
+
+      // ✅ Fast-path: token scoped student
+      if (actingStudentId === requestedStudentId) {
+        // allowed
+      } else {
+        // 🔍 Fallback: verify parent-child relation
+        const isChild = await prisma.studentParent.findFirst({
+          where: {
+            parent: { userId: user.userId },
+            studentId: requestedStudentId,
+          },
+        });
+
+        if (!isChild) {
+          return sendError(
+            res,
+            403,
+            "You are not authorized to view this student's profile",
+            "FORBIDDEN",
+          );
+        }
+      }
+    } else if (!["ADMIN", "STAFF"].includes(user.role)) {
+      return sendError(res, 403, "Unauthorized access", "FORBIDDEN");
+    }
+
     const student = await prisma.student.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: requestedStudentId },
       include: {
         school: { select: { id: true, name: true, schoolCode: true } },
         classroom: true,
@@ -672,23 +738,6 @@ export const getStudent = async (req, res) => {
           },
           orderBy: [{ isPrimary: "desc" }, { parent: { type: "asc" } }],
         },
-        parents: {
-          // ← changed from studentParents → parents
-          include: {
-            parent: {
-              select: {
-                id: true,
-                name: true,
-                type: true,
-                email: true,
-                phone: true,
-                address: true,
-              },
-            },
-          },
-          // orderBy is on the join table fields (isPrimary is on StudentParent)
-          orderBy: [{ isPrimary: "desc" }, { parent: { type: "asc" } }],
-        },
       },
     });
 
@@ -701,7 +750,7 @@ export const getStudent = async (req, res) => {
     const enrichedStudent = {
       ...student,
       currentSubjects: subjects
-        .filter((cs) => cs.subject) // null-safety: skip any broken curriculum records
+        .filter((cs) => cs.subject)
         .map((cs) => ({
           id: cs.subject.id,
           name: cs.subject.name,
@@ -722,7 +771,6 @@ export const getStudent = async (req, res) => {
     return sendError(res, 500, "Failed to fetch student", "INTERNAL_ERROR");
   }
 };
-
 /**
  * Update student (admin/staff only)
  */

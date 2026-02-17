@@ -31,35 +31,31 @@ export const createSlot = async (req, res) => {
   const endMinutes = timeToMinutes(endTime);
 
   if (startMinutes == null || endMinutes == null) {
-    return res.status(400).json({
-      error: "startTime and endTime are required in HH:mm format",
-    });
+    return sendError(
+      res,
+      400,
+      "startTime and endTime are required in HH:mm format",
+    );
   }
 
   if (endMinutes <= startMinutes) {
-    return res.status(400).json({
-      error: "endTime must be after startTime",
-    });
+    return sendError(res, 400, "endTime must be after startTime");
   }
 
   try {
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
       const activeYear = await getActiveAcademicYear(parseInt(schoolId));
-      if (!activeYear)
-        return res.status(400).json({ error: "No active academic year" });
+      if (!activeYear) return sendError(res, 400, "No active academic year");
       resolvedAcademicYearId = activeYear.id;
     }
 
-    // Overlap check – consider both classroom AND stream
-    const overlap = await prisma.timetableSlot.findFirst({
+    // Primary check: same classroom overlap
+    const classroomOverlap = await prisma.timetableSlot.findFirst({
       where: {
         academicYearId: Number(resolvedAcademicYearId),
         day,
-        OR: [
-          { classroomId: classroomId ? Number(classroomId) : undefined },
-          { streamId: streamId ? Number(streamId) : undefined },
-        ],
+        classroomId: Number(classroomId),
         NOT: {
           OR: [
             { endMinutes: { lte: startMinutes } },
@@ -69,8 +65,36 @@ export const createSlot = async (req, res) => {
       },
     });
 
-    if (overlap) {
-      return sendError(res, 409, "Time slot overlaps with an existing slot");
+    if (classroomOverlap) {
+      return sendError(
+        res,
+        409,
+        "Time slot overlaps with existing slot in the same classroom",
+      );
+    }
+    // === Optional but recommended: same teacher overlap ===
+    if (teacherId) {
+      const teacherOverlap = await prisma.timetableSlot.findFirst({
+        where: {
+          academicYearId: Number(resolvedAcademicYearId),
+          day,
+          teacherId: Number(teacherId),
+          NOT: {
+            OR: [
+              { endMinutes: { lte: startMinutes } },
+              { startMinutes: { gte: endMinutes } },
+            ],
+          },
+        },
+      });
+
+      if (teacherOverlap) {
+        return sendError(
+          res,
+          409,
+          "Teacher is already assigned to another slot at the same time",
+        );
+      }
     }
 
     const slot = await prisma.timetableSlot.create({
@@ -236,6 +260,213 @@ export const getSlots = async (req, res) => {
   }
 };
 
+export const getMyStudentTimetable = async (req, res) => {
+  const user = req.user;
+
+  try {
+    // 1. Determine target studentId
+    let studentId;
+
+    if (user.role === "STUDENT") {
+      const student = await prisma.student.findUnique({
+        where: { userId: user.id },
+        select: { id: true, schoolId: true },
+      });
+      if (!student) return sendError(res, 404, "Student profile not found");
+      if (user.schoolId && student.schoolId !== user.schoolId) {
+        return sendError(res, 403, "Not authorized for this student");
+      }
+      studentId = student.id;
+    } else if (user.role === "PARENT") {
+      const actingStudentId = user.actingAsStudentId;
+      if (!actingStudentId) {
+        return sendError(res, 403, "No child selected", "CHILD_NOT_SELECTED");
+      }
+      studentId = actingStudentId;
+      // Verify actingStudentId belongs to this parent (defense in depth)
+      const link = await prisma.studentParent.findFirst({
+        where: {
+          parent: { userId: user.id },
+          studentId: actingStudentId,
+        },
+        select: { student: { select: { schoolId: true } } },
+      });
+
+      if (!link) {
+        return sendError(
+          res,
+          403,
+          "Not authorized for this student",
+          "FORBIDDEN",
+        );
+      }
+      if (user.schoolId && link.student.schoolId !== user.schoolId) {
+        return sendError(res, 403, "Not authorized for this student's school");
+      }
+    } else {
+      return sendError(res, 403, "Only students or parents can access this");
+    }
+
+    // 2. Get active year
+    const activeYear = await getActiveAcademicYear(user.schoolId);
+    if (!activeYear) return sendError(res, 400, "No active academic year");
+
+    // 3. Get student's current classroom/stream
+    const enrollment = await prisma.studentStream.findFirst({
+      where: {
+        studentId,
+        academicYearId: activeYear.id,
+      },
+      select: {
+        classroomId: true,
+        streamId: true,
+        classroom: { select: { name: true, section: true } },
+      },
+    });
+
+    if (!enrollment || !enrollment.classroomId) {
+      return sendSuccess(
+        res,
+        200,
+        {
+          slots: [],
+          groupedByDay: {},
+          academicYear: activeYear.label,
+          className: "Not enrolled",
+        },
+        "No active classroom enrollment found",
+      );
+    }
+
+    // 4. Fetch timetable slots for this classroom/stream
+    const slots = await prisma.timetableSlot.findMany({
+      where: {
+        academicYearId: activeYear.id,
+        classroomId: enrollment.classroomId,
+      },
+      include: {
+        subject: { select: { id: true, name: true, code: true } },
+        teacher: { select: { id: true, name: true } },
+      },
+      orderBy: [{ day: "asc" }, { startMinutes: "asc" }],
+    });
+
+    // Optional: Group by day for frontend calendar
+    const groupedByDay = slots.reduce((acc, slot) => {
+      const day = slot.day;
+      if (!acc[day]) acc[day] = [];
+      acc[day].push({
+        time: `${Math.floor(slot.startMinutes / 60)
+          .toString()
+          .padStart(
+            2,
+            "0",
+          )}:${(slot.startMinutes % 60).toString().padStart(2, "0")} - ${Math.floor(
+          slot.endMinutes / 60,
+        )
+          .toString()
+          .padStart(
+            2,
+            "0",
+          )}:${(slot.endMinutes % 60).toString().padStart(2, "0")}`,
+        subject: slot.subject?.name || "N/A",
+        subjectCode: slot.subject?.code || "",
+        teacher: slot.teacher?.name || "N/A",
+      });
+      return acc;
+    }, {});
+
+    return sendSuccess(
+      res,
+      200,
+      {
+        slots,
+        groupedByDay,
+        academicYear: activeYear.label,
+        className: enrollment.classroom.name,
+        section: enrollment.classroom.section,
+      },
+      "Your timetable fetched successfully",
+    );
+  } catch (err) {
+    console.error("Get my timetable error:", err);
+    return sendError(res, 500, "Failed to fetch timetable");
+  }
+};
+
+export const getMyTeacherSlots = async (req, res) => {
+  const user = req.user;
+
+  try {
+    if (!["STAFF", "TEACHER"].includes(user.role)) {
+      return sendError(res, 403, "Only teachers can access this");
+    }
+
+    const teacher = await prisma.staff.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+
+    if (!teacher) return sendError(res, 404, "Teacher profile not found");
+
+    const activeYear = await getActiveAcademicYear(user.schoolId);
+    if (!activeYear) return sendError(res, 400, "No active academic year");
+
+    const slots = await prisma.timetableSlot.findMany({
+      where: {
+        teacherId: teacher.id,
+        academicYearId: activeYear.id,
+      },
+      include: {
+        classroom: { select: { name: true, section: true } },
+        subject: { select: { name: true, code: true } },
+        stream: { select: { name: true } },
+      },
+      orderBy: [{ day: "asc" }, { startMinutes: "asc" }],
+    });
+
+    // Group by day for calendar view
+    const groupedByDay = slots.reduce((acc, slot) => {
+      const day = slot.day;
+      if (!acc[day]) acc[day] = [];
+      acc[day].push({
+        time: `${Math.floor(slot.startMinutes / 60)
+          .toString()
+          .padStart(
+            2,
+            "0",
+          )}:${(slot.startMinutes % 60).toString().padStart(2, "0")} - ${Math.floor(
+          slot.endMinutes / 60,
+        )
+          .toString()
+          .padStart(
+            2,
+            "0",
+          )}:${(slot.endMinutes % 60).toString().padStart(2, "0")}`,
+        class: slot.classroom?.name || "N/A",
+        section: slot.classroom?.section || "",
+        stream: slot.stream?.name || "",
+        subject: slot.subject?.name || "N/A",
+      });
+      return acc;
+    }, {});
+
+    return sendSuccess(
+      res,
+      200,
+      {
+        slots,
+        groupedByDay,
+        academicYear: activeYear.label,
+      },
+      "Your teaching timetable fetched successfully",
+    );
+  } catch (err) {
+    console.error("Get my teacher slots error:", err);
+    return sendError(res, 500, "Failed to fetch timetable");
+  }
+};
+
 export const updateSlot = async (req, res) => {
   const { id } = req.params;
   const updates = { ...req.body };
@@ -245,7 +476,7 @@ export const updateSlot = async (req, res) => {
     if (updates.startTime) {
       const sm = timeToMinutes(updates.startTime);
       if (sm == null) {
-        return res.status(400).json({ error: "Invalid startTime format" });
+        return sendError(res, 400, "Invalid startTime format");
       }
       updates.startMinutes = sm;
     }
@@ -253,7 +484,7 @@ export const updateSlot = async (req, res) => {
     if (updates.endTime) {
       const em = timeToMinutes(updates.endTime);
       if (em == null) {
-        return res.status(400).json({ error: "Invalid endTime format" });
+        return sendError(res, 400, "Invalid endTime format");
       }
       updates.endMinutes = em;
     }
@@ -306,9 +537,9 @@ export const updateSlot = async (req, res) => {
   } catch (err) {
     console.error(err);
     if (err.code === "P2025") {
-      return res.status(404).json({ error: "Slot not found" });
+      return sendError(res, 404, "Slot not found");
     }
-    return res.status(500).json({ error: "Failed to update slot" });
+    return sendError(res, 500, "Failed to update slot");
   }
 };
 
@@ -319,8 +550,7 @@ export const deleteSlot = async (req, res) => {
     return sendSuccess(res, 200, null, "Slot deleted successfully");
   } catch (err) {
     console.error(err);
-    if (err.code === "P2025")
-      return res.status(404).json({ error: "Slot not found" });
-    res.status(500).json({ error: "Failed to delete slot" });
+    if (err.code === "P2025") return sendError(res, 404, "Slot not found");
+    return sendError(res, 500, "Failed to delete slot");
   }
 };

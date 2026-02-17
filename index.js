@@ -23,6 +23,7 @@ import teacherAssignmentRoutes from "./routes/teacherAssignmentRoutes.js";
 import curriculumSubjectRoutes from "./routes/curriculumSubjectRoutes.js";
 import feeRoutes from "./routes/feeRoutes.js";
 import parentsRoutes from "./routes/parentRoutes.js";
+import admissionRoutes from "./routes/admissionRoutes.js";
 
 const app = express();
 app.use(cors());
@@ -55,13 +56,14 @@ app.use("/api/teacher-assignments", teacherAssignmentRoutes);
 app.use("/api/curriculum-subjects", curriculumSubjectRoutes);
 app.use("/api/fees", feeRoutes);
 app.use("/api/parents", parentsRoutes);
+app.use("/api/admissions", admissionRoutes);
 
 // Swagger route
 app.use(
   "/api-docs",
   swaggerAuth,
   swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec)
+  swaggerUi.setup(swaggerSpec),
 );
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

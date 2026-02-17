@@ -6,9 +6,11 @@ import {
   updateAnnouncement,
   deleteAnnouncement,
   suspendEvent,
+  getMyAnnouncements,
+  getUniversalAnnouncements,
 } from "../controllers/announcementController.js";
 
-import { authenticate } from "../middlewares/authMiddleware.js";
+import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import { announcementPermission } from "../middlewares/announcementPermission.js";
 import { loadAnnouncement } from "../middlewares/loadAnnouncement.js";
 
@@ -17,6 +19,16 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get("/", getAnnouncements);
+router.get(
+  "/my-announcements",
+  authorize("STUDENT", "PARENT"),
+  getMyAnnouncements,
+);
+router.get(
+  "/announcements/universal",
+  authorize("STUDENT", "PARENT"),
+  getUniversalAnnouncements,
+);
 router.get("/:id", loadAnnouncement, getAnnouncement);
 
 router.post("/", announcementPermission, createAnnouncement);
@@ -24,20 +36,20 @@ router.put(
   "/:id",
   loadAnnouncement,
   announcementPermission,
-  updateAnnouncement
+  updateAnnouncement,
 );
 router.delete(
   "/:id",
   loadAnnouncement,
   announcementPermission,
-  deleteAnnouncement
+  deleteAnnouncement,
 );
 
 router.patch(
   "/:id/suspend",
   loadAnnouncement,
   announcementPermission,
-  suspendEvent
+  suspendEvent,
 );
 
 export default router;
