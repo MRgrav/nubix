@@ -160,6 +160,8 @@ model TeacherAssignment {
 
 model Student {
   id          Int       @id @default(autoincrement())
+  title       String?
+  title       String
   name        String
   email       String    @unique
   grade       String?
@@ -176,7 +178,10 @@ model Student {
   admissionDate        DateTime?
   admissionReceiptNo   String?
   admissionReceiptLink String?
-
+  city                 String?
+  state                String?
+  pincode              String?
+  address              String?
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
 
