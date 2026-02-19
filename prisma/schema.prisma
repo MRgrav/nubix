@@ -176,10 +176,7 @@ model Student {
   admissionDate        DateTime?
   admissionReceiptNo   String?
   admissionReceiptLink String?
-  city                 String?
-  state                String?
-  pincode              String?
-  address              String?
+  
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
 
