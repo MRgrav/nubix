@@ -160,7 +160,6 @@ model TeacherAssignment {
 
 model Student {
   id          Int       @id @default(autoincrement())
-  title       String?
   name        String
   email       String    @unique
   grade       String?
