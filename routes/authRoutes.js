@@ -7,6 +7,7 @@ import {
   forgotPassword,
   resetPassword,
   setupAdmin,
+  updateAdminProfile,
 } from "../controllers/authController.js";
 import { loginValidation } from "../middlewares/validationMiddleware.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
@@ -24,6 +25,12 @@ router.post("/change-password", authenticate, changePassword);
 
 // One-time bootstrap route to create initial ADMIN. Requires BOOTSTRAP_ADMIN_SECRET env var.
 router.post("/setup-admin", setupAdmin);
+router.put(
+  "/admin/profile",
+  authenticate,
+  authorize("ADMIN"),
+  updateAdminProfile,
+);
 
 // Admin only routes
 router.post("/users", authenticate, authorize("ADMIN"), createUser);
