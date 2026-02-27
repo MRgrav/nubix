@@ -526,3 +526,104 @@ export const changePassword = async (req, res) => {
     res.status(500).json({ error: "Failed to update password" });
   }
 };
+
+/**
+ * Admin-only: Update own admin profile
+ * Allowed fields: name, email, schoolId, password (with current password verification)
+ */
+export const updateAdminProfile = async (req, res) => {
+  try {
+    // Only ADMIN can update their own profile
+    if (!req.user || req.user.role !== "ADMIN") {
+      return sendError(
+        res,
+        403,
+        "Only administrators can update their profile",
+      );
+    }
+
+    const userId = req.user.userId;
+    const { email, schoolId } = req.body;
+
+    // At least one field must be provided
+    if (!email && !schoolId) {
+      return sendError(
+        res,
+        400,
+        "At least one field ( email, schoolId) is required",
+      );
+    }
+
+    // Fetch current admin data
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        schoolId: true,
+      },
+    });
+
+    if (!currentUser) {
+      return sendError(res, 404, "Admin profile not found");
+    }
+
+    const updateData = {};
+
+    // Email update + uniqueness check
+    if (email && email.trim() !== currentUser.email) {
+      const emailExists = await prisma.user.findFirst({
+        where: { email: email.trim(), id: { not: userId } },
+      });
+      if (emailExists) {
+        return sendError(res, 409, "Email is already in use by another user");
+      }
+      updateData.email = email.trim();
+    }
+
+    // SchoolId update
+    if (schoolId !== undefined && Number(schoolId) !== currentUser.schoolId) {
+      // Optional: validate school exists
+      const schoolExists = await prisma.school.findUnique({
+        where: { id: Number(schoolId) },
+      });
+      if (!schoolExists) {
+        return sendError(res, 404, "School not found");
+      }
+      updateData.schoolId = Number(schoolId);
+    }
+
+    // If nothing to update
+    if (Object.keys(updateData).length === 0) {
+      return sendError(res, 400, "No changes provided");
+    }
+
+    // Perform update in transaction
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      return tx.user.update({
+        where: { id: userId },
+        data: updateData,
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          schoolId: true,
+          createdAt: true,
+        },
+      });
+    });
+
+    return sendSuccess(res, 200, {
+      message: "Admin profile updated successfully",
+      user: updatedUser,
+    });
+  } catch (err) {
+    console.error("Update admin profile error:", err);
+
+    if (err.code === "P2002") {
+      return sendError(res, 409, "Email is already in use");
+    }
+
+    return sendError(res, 500, "Failed to update admin profile", err.message);
+  }
+};
