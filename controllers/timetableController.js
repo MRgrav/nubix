@@ -212,6 +212,12 @@ export const getSlots = async (req, res) => {
             section: true,
           },
         },
+        stream: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         subject: {
           select: {
             id: true,

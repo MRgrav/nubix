@@ -715,10 +715,8 @@ export const getStudent = async (req, res) => {
           },
           orderBy: { academicYear: { startDate: "desc" } },
         },
-        examinationResults: {
-          include: { examination: true },
-          orderBy: { createdAt: "desc" },
-        },
+        examMarks: true,
+        examResults: true,
         attendances: {
           orderBy: { date: "desc" },
           take: 30,

@@ -7,6 +7,7 @@ import {
   selectChild,
   updateParent,
   deleteParent,
+  getParentById,
 } from "../controllers/parentController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 
@@ -16,6 +17,7 @@ router.use(authenticate);
 // Admin only
 router.post("/", authorize("ADMIN"), createParent);
 router.get("/", authorize("ADMIN"), getParents);
+router.get("/:id", getParentById);
 
 // Admin only
 router.put("/:id", authorize("ADMIN"), updateParent);

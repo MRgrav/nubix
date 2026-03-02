@@ -1,37 +1,96 @@
-import express from 'express';
+import express from "express";
+
+import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import {
-  createExamination,
-  getExaminations,
-  getExamination,
-  updateExamination,
-  deleteExamination,
-  addExaminationResult,
-  getStudentExaminationResults,
-  getExaminationResult,
-  deleteExaminationResult,
-  getExaminationStats,
-  updateExaminationPermission,
-  getExaminationPermissions
-} from '../controllers/examinationController.js';
-import { authenticate, authorize } from '../middlewares/authMiddleware.js';
+  createExamConfig,
+  getExamConfigs,
+  createGradingScheme,
+  getGradingSchemes,
+  getGradingSchemeById,
+  updateExamConfig,
+  deleteExamConfig,
+} from "../controllers/examinationController/examConfigController.js";
+
+import {
+  createExamTerm,
+  getExamTerms,
+  lockTermResults,
+  publishTermResults,
+  updateExamTerm,
+  deleteExamTerm,
+} from "../controllers/examinationController/examTermController.js";
+import {
+  createExam,
+  getExams,
+  updateExam,
+} from "../controllers/examinationController/examController.js";
+import {
+  enterExamMarks,
+  getExamMarks,
+} from "../controllers/examinationController/examMarksController.js";
+import {
+  getExamResults,
+  calculateTermResults,
+} from "../controllers/examinationController/examResultController.js";
+import { sendError, sendSuccess } from "../utils/responseStructure.js";
 
 const router = express.Router();
+router.use(authenticate);
 
-// Examination management routes
-router.get('/', authenticate, authorize('ADMIN', 'STAFF'), getExaminations);
-router.post('/', authenticate, authorize('ADMIN', 'STAFF'), createExamination);
-router.get('/:id', authenticate, authorize('ADMIN', 'STAFF', 'STUDENT'), getExamination);
-router.put('/:id', authenticate, authorize('ADMIN', 'STAFF'), updateExamination);
-router.delete('/:id', authenticate, authorize('ADMIN', 'STAFF'), deleteExamination);
+// ────────────────────────────────────────────────
+// Exam Configs & Grading (Admin only)
+// ────────────────────────────────────────────────
+router.post("/configs", authorize("ADMIN"), createExamConfig);
+router.get("/configs", authorize("ADMIN", "STAFF"), getExamConfigs);
+router.put("/configs/:id", authorize("ADMIN"), updateExamConfig);
+router.delete("/configs/:id", authorize("ADMIN"), deleteExamConfig);
+router.get("/grading-schemes", authorize("ADMIN"), getGradingSchemes);
+router.get("/grading-schemes/:id", authorize("ADMIN"), getGradingSchemeById);
+router.post("/grading-schemes", authorize("ADMIN"), createGradingScheme);
 
-// Examination results routes
-router.post('/results/add', authenticate, authorize('ADMIN', 'STAFF'), addExaminationResult);
-router.get('/student/:studentId', authenticate, authorize('ADMIN', 'STAFF', 'STUDENT'), getStudentExaminationResults);
-router.get('/result/:resultId', authenticate, authorize('ADMIN', 'STAFF', 'STUDENT'), getExaminationResult);
-router.delete('/result/:resultId', authenticate, authorize('ADMIN', 'STAFF'), deleteExaminationResult);
+// ────────────────────────────────────────────────
+// Exam Terms (Admin)
+// ────────────────────────────────────────────────
+router.post("/terms", authorize("ADMIN"), createExamTerm);
+router.post("/terms/lock", authorize("ADMIN"), lockTermResults);
+router.post("/terms/publish", authorize("ADMIN"), publishTermResults);
+router.get("/terms", authorize("ADMIN", "STAFF"), getExamTerms);
+router.put("/terms/:id", authorize("ADMIN", "STAFF"), updateExamTerm);
+router.delete("/terms/:id", authorize("ADMIN", "STAFF"), deleteExamTerm);
+router.post("/terms/results/lock", authorize("ADMIN"), lockTermResults);
+router.post("/terms/results/publish", authorize("ADMIN"), publishTermResults);
 
-// Statistics route
-router.get('/:examinationId/stats', authenticate, authorize('ADMIN', 'STAFF'), getExaminationStats);
+// ────────────────────────────────────────────────
+// Exams (Admin/Teacher)
+// ────────────────────────────────────────────────
+router.post("/", authorize("ADMIN", "STAFF"), createExam);
+router.get("/", authorize("ADMIN", "STAFF", "STUDENT", "PARENT"), getExams);
+router.put("/:id", authorize("ADMIN", "STAFF"), updateExam);
+
+// ────────────────────────────────────────────────
+// Marks Entry (Teacher)
+// ────────────────────────────────────────────────
+router.get(
+  "/:examId/marks",
+  authorize("ADMIN", "STAFF", "STUDENT", "PARENT"),
+  getExamMarks,
+);
+router.post("/:examId/marks", authorize("STAFF", "ADMIN"), enterExamMarks);
+
+// ────────────────────────────────────────────────
+// Results (All roles)
+// ────────────────────────────────────────────────
+router.get(
+  "/results",
+  authorize("ADMIN", "STAFF", "STUDENT", "PARENT"),
+  getExamResults,
+);
+// routes/examinationRoutes.js
+router.post(
+  "/results/calculate",
+  authorize("ADMIN", "STAFF"),
+  calculateTermResults,
+);
 
 // Permission management routes
 router.post('/permissions/update', authenticate, authorize('ADMIN'), updateExaminationPermission);

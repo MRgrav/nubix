@@ -39,8 +39,7 @@ export const authenticate = async (req, res, next) => {
     console.log("User found in DB:", !!user);
 
     if (!user) {
-      console.log("❌ Token valid but user not found");
-      return res.status(401).json({ error: "User not Found" });
+      return res.status(401).json({ error: "Invalid token" });
     }
 
     let resolvedSchoolId = user.school?.id || null;

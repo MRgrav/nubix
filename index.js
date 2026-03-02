@@ -24,7 +24,7 @@ import curriculumSubjectRoutes from "./routes/curriculumSubjectRoutes.js";
 import feeRoutes from "./routes/feeRoutes.js";
 import parentsRoutes from "./routes/parentRoutes.js";
 import admissionRoutes from "./routes/admissionRoutes.js";
-
+import examBoardRouter from "./routes/examBoardRouter.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -42,7 +42,7 @@ app.use("/api/students", studentRoutes);
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/classes", classRoutes);
 app.use("/api/attendance", attendanceRoutes);
-app.use("/api/examinations", examinationRoutes);
+app.use("/api/exams", examinationRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/timetable", timetableRoutes);
@@ -57,6 +57,7 @@ app.use("/api/curriculum-subjects", curriculumSubjectRoutes);
 app.use("/api/fees", feeRoutes);
 app.use("/api/parents", parentsRoutes);
 app.use("/api/admissions", admissionRoutes);
+app.use("/api/boards", examBoardRouter);
 
 // Swagger route
 app.use(
