@@ -196,6 +196,77 @@ export const getParents = async (req, res) => {
   }
 };
 
+export const getParentById = async (req, res) => {
+  const { id } = req.params;
+
+  // 1. Authorization Check: Admin/Staff can see any, Parent can see self
+  if (!["ADMIN", "STAFF", "PARENT"].includes(req.user.role)) {
+    return sendError(res, 403, "Unauthorized", "FORBIDDEN");
+  }
+
+  try {
+    const parent = await prisma.parent.findUnique({
+      where: { id: parseInt(id) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            schoolId: true,
+          },
+        },
+        students: {
+          include: {
+            student: {
+              select: {
+                id: true,
+                name: true,
+                grade: true,
+                classroom: { select: { name: true, section: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!parent) {
+      return sendError(res, 404, "Parent not found", "NOT_FOUND");
+    }
+
+    // 2. Security: Ensure parents can only access their own profile
+    if (req.user.role === "PARENT" && parent.userId !== req.user.userId) {
+      return sendError(
+        res,
+        403,
+        "You can only access your own profile",
+        "FORBIDDEN",
+      );
+    }
+
+    // 3. Format response
+    const formatted = {
+      ...parent,
+      linkedStudents: parent.students.map((link) => ({
+        studentId: link.student.id,
+        studentName: link.student.name,
+        grade: link.student.grade,
+        classroom: link.student.classroom,
+        isPrimary: link.isPrimary,
+      })),
+    };
+
+    // Remove the raw students array from the response
+    delete formatted.students;
+
+    return sendSuccess(res, 200, formatted, "Parent fetched successfully");
+  } catch (err) {
+    console.error("Error in getParentById:", err);
+    return sendError(res, 500, "Failed to fetch parent", "INTERNAL_ERROR");
+  }
+};
+
 // Get my children (Parent only)
 export const getMyChildren = async (req, res) => {
   if (req.user.role !== "PARENT") {

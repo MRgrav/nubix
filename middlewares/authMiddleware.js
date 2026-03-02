@@ -28,9 +28,9 @@ export const authenticate = async (req, res, next) => {
       },
     });
 
-    if (!user) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
+    // if (!user) {
+    //   return res.status(401).json({ error: "User Not Found" });
+    // }
 
     let resolvedSchoolId = user.school?.id || null;
     let resolvedSchoolCode = user.school?.schoolCode || null;
