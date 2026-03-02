@@ -7,13 +7,21 @@ dotenv.config();
 
 export const authenticate = async (req, res, next) => {
   try {
+    
     const authHeader = req.headers.authorization;
+     // console.log("Authorization Header:", authHeader);
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("❌ No Bearer token found");
       return res.status(401).json({ error: "No token provided" });
     }
 
     const token = authHeader.split(" ")[1];
+    // console.log("Extracted Token Length:", token?.length);
+
+    // console.log("JWT_SECRET exists:", !!process.env.JWT_SECRET);
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // console.log("Decoded Token:", decoded);
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
@@ -28,9 +36,11 @@ export const authenticate = async (req, res, next) => {
       },
     });
 
-    // if (!user) {
-    //   return res.status(401).json({ error: "User Not Found" });
-    // }
+    console.log("User found in DB:", !!user);
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
 
     let resolvedSchoolId = user.school?.id || null;
     let resolvedSchoolCode = user.school?.schoolCode || null;
@@ -54,12 +64,18 @@ export const authenticate = async (req, res, next) => {
       schoolId: resolvedSchoolId || undefined,
       schoolCode: resolvedSchoolCode || undefined,
     };
+    // console.log("✅ Authentication successful for user:", user.id);
+    console.log("---- AUTH DEBUG END ----");
 
     next();
   } catch (error) {
+    console.log("❌ AUTH ERROR:", error.message);
+
     if (error instanceof jwt.TokenExpiredError) {
+      console.log("Token expired");
       return res.status(401).json({ error: "Token expired" });
     }
+
     return res.status(401).json({ error: "Invalid token" });
   }
 };

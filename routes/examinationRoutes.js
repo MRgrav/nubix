@@ -92,4 +92,8 @@ router.post(
   calculateTermResults,
 );
 
+// Permission management routes
+router.post('/permissions/update', authenticate, authorize('ADMIN'), updateExaminationPermission);
+router.get('/:examinationId/permissions', authenticate, authorize('ADMIN'), getExaminationPermissions);
+
 export default router;
