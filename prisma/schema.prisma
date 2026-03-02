@@ -434,17 +434,6 @@ model Classroom {
   announcements      Announcement[]      @relation("ClassroomAnnouncements")
 }
 
-enum ExaminationStatus {
-  SCHEDULED
-  IN_PROGRESS
-  COMPLETED
-  CANCELLED
-}
-
-enum MarkingSystem {
-  MARKS
-  GRADE
-}
 
 enum DayOfWeek {
   MONDAY
