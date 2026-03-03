@@ -435,6 +435,7 @@ model Classroom {
 }
 
 
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
