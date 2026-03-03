@@ -7,9 +7,8 @@ dotenv.config();
 
 export const authenticate = async (req, res, next) => {
   try {
-    
     const authHeader = req.headers.authorization;
-     // console.log("Authorization Header:", authHeader);
+    // console.log("Authorization Header:", authHeader);
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       console.log("❌ No Bearer token found");
       return res.status(401).json({ error: "No token provided" });
@@ -36,7 +35,7 @@ export const authenticate = async (req, res, next) => {
       },
     });
 
-    console.log("User found in DB:", !!user);
+    // console.log("User found in DB:", !!user);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid token" });
@@ -65,7 +64,7 @@ export const authenticate = async (req, res, next) => {
       schoolCode: resolvedSchoolCode || undefined,
     };
     // console.log("✅ Authentication successful for user:", user.id);
-    console.log("---- AUTH DEBUG END ----");
+    // console.log("---- AUTH DEBUG END ----");
 
     next();
   } catch (error) {

@@ -18,6 +18,7 @@ export const getAttendanceTableName = (academicYearLabel) => {
  */
 export const ensureAttendanceTable = async (academicYearLabel) => {
   const tableName = getAttendanceTableName(academicYearLabel);
+  const quotedTableName = `"${tableName}"`;
 
   // Check if table exists
   const tableExistsResult = await prisma.$queryRawUnsafe(
@@ -31,7 +32,6 @@ export const ensureAttendanceTable = async (academicYearLabel) => {
 
   if (!tableExistsResult[0].exists) {
     // Create table with same structure as Attendance model
-    const quotedTableName = `"${tableName}"`;
     await prisma.$executeRawUnsafe(`
       CREATE TABLE ${quotedTableName} (
         id SERIAL PRIMARY KEY,
@@ -39,7 +39,7 @@ export const ensureAttendanceTable = async (academicYearLabel) => {
         status TEXT NOT NULL CHECK (status IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED')),
         note TEXT,
         "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP,
+        "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         "studentId" INTEGER REFERENCES "Student"(id) ON DELETE CASCADE,
         "staffId" INTEGER REFERENCES "Staff"(id) ON DELETE CASCADE,
         "academicYearId" INTEGER NOT NULL REFERENCES "AcademicYear"(id) ON DELETE CASCADE,

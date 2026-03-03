@@ -118,7 +118,6 @@ export const getBoard = async (req, res) => {
         examConfigs: {
           select: {
             id: true,
-            termName: true,
             weightage: true,
             maxMarks: true,
           },

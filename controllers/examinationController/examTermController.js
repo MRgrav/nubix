@@ -157,7 +157,6 @@ export const updateExamTerm = async (req, res) => {
       },
       include: {
         academicYear: { select: { label: true } },
-        config: { select: { termName: true } },
       },
     });
 
