@@ -134,7 +134,7 @@ export const getClassroom = async (req, res) => {
   }
 };
 
-// APP API feo class name,id,section
+// APP API for class name,id,section
 export const getClassesDropdown = async (req, res) => {
   const { search, limit = 100 } = req.query;
 

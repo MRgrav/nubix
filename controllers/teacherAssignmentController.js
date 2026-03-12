@@ -1,5 +1,6 @@
 import prisma from "../models/prisma.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
+import { sendError, sendSuccess } from "./../utils/responseStructure.js";
 
 export const createTeacherAssignment = async (req, res) => {
   const {
@@ -16,9 +17,7 @@ export const createTeacherAssignment = async (req, res) => {
   try {
     // Validate required fields (teacher and subject always required)
     if (!teacherId || !subjectId) {
-      return res
-        .status(400)
-        .json({ error: "teacherId and subjectId are required" });
+      return sendError(res, 400, "teacherId and subjectId are required");
     }
 
     // Resolve academic year
@@ -26,55 +25,53 @@ export const createTeacherAssignment = async (req, res) => {
     if (!resolvedAcademicYearId) {
       const activeYear = await getActiveAcademicYear();
       if (!activeYear) {
-        return res.status(400).json({ error: "No active academic year found" });
+        return sendError(res, 400, "No active academic year found");
       }
       resolvedAcademicYearId = activeYear.id;
     }
 
-    // Optional: Fetch classroom for validation if provided
+    // Classroom validation
     let classroom = null;
     if (classroomId) {
       classroom = await prisma.classroom.findUnique({
         where: { id: parseInt(classroomId) },
         select: { id: true, name: true },
       });
-
       if (!classroom) {
-        return res.status(404).json({ error: "Classroom not found" });
+        return sendError(res, 404, "Classroom not found");
       }
     }
 
-    // Optional: Stream validation (only if classroom is provided and for class 11 or 12)
+    // Stream validation logic
     if (streamId && classroomId) {
       const classNumber = classroom.name.replace(/[^\d]/g, "");
       if (!["11", "12"].includes(classNumber)) {
-        return res.status(400).json({
-          error: "Stream assignments are only allowed for Class 11 and 12",
-        });
+        return sendError(
+          res,
+          400,
+          "Stream assignments are only allowed for Class 11 and 12",
+        );
       }
     } else if (streamId && !classroomId) {
-      return res
-        .status(400)
-        .json({ error: "Stream requires a classroom to be specified" });
+      return sendError(res, 400, "Stream requires a classroom to be specified");
     }
 
-    // Subject Validation
+    // Subject & Teacher validation
     const subject = await prisma.subject.findUnique({
       where: { id: parseInt(subjectId) },
       select: { id: true },
     });
-    if (!subject) return res.status(404).json({ error: "Subject not found" });
+    if (!subject) return sendError(res, 404, "Subject not found");
 
-    // Teacher Validation
     const teacher = await prisma.staff.findUnique({
       where: { id: parseInt(teacherId) },
       select: { id: true },
     });
-    if (!teacher) return res.status(404).json({ error: "Teacher not found" });
+    if (!teacher) return sendError(res, 404, "Teacher not found");
 
     // Date validation
     if (fromDate && toDate && new Date(fromDate) > new Date(toDate)) {
-      return res.status(400).json({ error: "fromDate must be before toDate" });
+      return sendError(res, 400, "fromDate must be before toDate");
     }
 
     // CRITICAL: Prevent duplicate assignment (same scope, handling optionals as null)
@@ -89,8 +86,7 @@ export const createTeacherAssignment = async (req, res) => {
     });
 
     if (existingAssignment) {
-      return res.status(409).json({
-        error: "This assignment already exists",
+      return sendError(res, 409, "This assignment already exists", {
         message:
           "This teacher is already assigned to this subject, class, and academic year",
         existingAssignmentId: existingAssignment.id,
@@ -123,10 +119,11 @@ export const createTeacherAssignment = async (req, res) => {
         });
 
         if (overlapping) {
-          return res.status(409).json({
-            error:
-              "Teacher already has an overlapping assignment in this period",
-          });
+          return sendError(
+            res,
+            409,
+            "Teacher already has an overlapping assignment in this period",
+          );
         }
       }
     }
@@ -173,20 +170,32 @@ export const createTeacherAssignment = async (req, res) => {
       },
     };
 
-    res.status(201).json(response);
+    return sendSuccess(
+      res,
+      201,
+      response,
+      "Teacher assignment created successfully",
+    );
   } catch (err) {
     console.error("Create teacher assignment error:", err);
+
     if (err.code === "P2002") {
-      return res
-        .status(400)
-        .json({ error: "Duplicate assignment in this scope" });
+      return sendError(res, 409, "Duplicate assignment in this scope");
     }
     if (err.code === "P2025") {
-      return res
-        .status(404)
-        .json({ error: "Teacher, subject, or classroom not found" });
+      return sendError(
+        res,
+        404,
+        "Teacher, subject, classroom or stream not found",
+      );
     }
-    res.status(500).json({ error: "Failed to create teacher assignment" });
+
+    return sendError(
+      res,
+      500,
+      "Failed to create teacher assignment",
+      err.message,
+    );
   }
 };
 
@@ -202,15 +211,12 @@ export const getTeacherAssignments = async (req, res) => {
   } = req.query;
 
   try {
-    let resolvedAcademicYearId = academicYearId;
-    if (!resolvedAcademicYearId) {
-      const activeYear = await getActiveAcademicYear();
-      resolvedAcademicYearId = activeYear?.id;
-    }
+    let resolvedAcademicYearId = academicYearId
+      ? parseInt(academicYearId)
+      : (await getActiveAcademicYear())?.id;
 
     const where = {};
-    if (resolvedAcademicYearId)
-      where.academicYearId = parseInt(resolvedAcademicYearId);
+    if (resolvedAcademicYearId) where.academicYearId = resolvedAcademicYearId;
     if (teacherId) where.teacherId = parseInt(teacherId);
     if (classroomId) where.classroomId = parseInt(classroomId);
     if (subjectId) where.subjectId = parseInt(subjectId);
@@ -232,15 +238,26 @@ export const getTeacherAssignments = async (req, res) => {
       orderBy: { createdAt: "desc" },
     });
 
-    res.json({ assignments });
+    return sendSuccess(
+      res,
+      200,
+      { assignments },
+      "Teacher assignments fetched",
+    );
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch assignments" });
+    return sendError(
+      res,
+      500,
+      "Failed to fetch teacher assignments",
+      err.message,
+    );
   }
 };
 
 export const getTeacherAssignment = async (req, res) => {
   const { id } = req.params;
+
   try {
     const assignment = await prisma.teacherAssignment.findUnique({
       where: { id: parseInt(id) },
@@ -255,12 +272,15 @@ export const getTeacherAssignment = async (req, res) => {
         },
       },
     });
-    if (!assignment)
-      return res.status(404).json({ error: "Assignment not found" });
-    res.json(assignment);
+
+    if (!assignment) {
+      return sendError(res, 404, "Assignment not found");
+    }
+
+    return sendSuccess(res, 200, assignment, "Teacher assignment fetched");
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch assignment" });
+    return sendError(res, 500, "Failed to fetch assignment", err.message);
   }
 };
 
@@ -268,6 +288,7 @@ export const getTeacherAssignment = async (req, res) => {
 export const updateTeacherAssignment = async (req, res) => {
   const { id } = req.params;
   const { fromDate, toDate, status, streamId, classroomId } = req.body;
+
   try {
     const data = {};
     if (fromDate) data.fromDate = new Date(fromDate);
@@ -282,21 +303,23 @@ export const updateTeacherAssignment = async (req, res) => {
         ? { connect: { id: parseInt(classroomId) } }
         : { disconnect: true };
 
-    // If adding classroom, validate stream if applicable
+    // Classroom + stream validation when updating
     if (classroomId) {
       const classroom = await prisma.classroom.findUnique({
         where: { id: parseInt(classroomId) },
         select: { id: true, name: true },
       });
       if (!classroom) {
-        return res.status(404).json({ error: "Classroom not found" });
+        return sendError(res, 404, "Classroom not found");
       }
       if (streamId) {
         const classNumber = classroom.name.replace(/[^\d]/g, "");
         if (!["11", "12"].includes(classNumber)) {
-          return res.status(400).json({
-            error: "Stream assignments are only allowed for Class 11 and 12",
-          });
+          return sendError(
+            res,
+            400,
+            "Stream assignments are only allowed for Class 11 and 12",
+          );
         }
       }
     }
@@ -315,25 +338,39 @@ export const updateTeacherAssignment = async (req, res) => {
         academicYear: { select: { id: true, label: true } },
       },
     });
-    res.json(assignment);
+
+    return sendSuccess(
+      res,
+      200,
+      assignment,
+      "Teacher assignment updated successfully",
+    );
   } catch (err) {
     console.error(err);
-    if (err.code === "P2025")
-      return res.status(404).json({ error: "Assignment not found" });
-    res.status(500).json({ error: "Failed to update assignment" });
+    if (err.code === "P2025") {
+      return sendError(res, 404, "Assignment not found");
+    }
+    return sendError(res, 500, "Failed to update assignment", err.message);
   }
 };
 
 export const deleteTeacherAssignment = async (req, res) => {
   const { id } = req.params;
+
   try {
     await prisma.teacherAssignment.delete({ where: { id: parseInt(id) } });
-    res.json({ message: "Assignment deleted" });
+    return sendSuccess(
+      res,
+      200,
+      { message: "Assignment deleted" },
+      "Assignment deleted successfully",
+    );
   } catch (err) {
     console.error(err);
-    if (err.code === "P2025")
-      return res.status(404).json({ error: "Assignment not found" });
-    res.status(500).json({ error: "Failed to delete assignment" });
+    if (err.code === "P2025") {
+      return sendError(res, 404, "Assignment not found");
+    }
+    return sendError(res, 500, "Failed to delete assignment", err.message);
   }
 };
 

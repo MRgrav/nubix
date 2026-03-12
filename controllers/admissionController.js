@@ -42,23 +42,6 @@ export const createAdmission = async (req, res) => {
   try {
     const validated = admissionSchema.parse(req.body);
 
-    // const activeYear = await getActiveAcademicYear(validated.schoolId);
-    // if (!activeYear) {
-    //   return sendError(
-    //     res,
-    //     400,
-    //     "No active academic year for this school",
-    //     "ACADEMIC_YEAR_ERROR",
-    //   );
-    // }
-
-    // let academicYearId = validated.academicYearId;
-
-    // if (!academicYearId) {
-    //   const activeYear = await getActiveAcademicYear(validated.schoolId);
-    //   academicYearId = activeYear?.id || null; // fallback only
-    // }
-
     const admission = await prisma.admissionRequest.create({
       data: {
         ...validated,
@@ -68,23 +51,19 @@ export const createAdmission = async (req, res) => {
         admissionDate: validated.admissionDate
           ? new Date(validated.admissionDate)
           : null,
-        parents: validated.parents ? JSON.stringify(validated.parents) : null,
-        schoolId: validated.schoolId,
+        parents: validated.parents || null, // ⭐ FIXED (no stringify)
         academicYearId: validated.academicYearId || null,
         createdById: req.user?.id || null,
       },
       include: {
         school: { select: { id: true, name: true } },
         academicYear: { select: { label: true } },
+        requestedClassroom: { select: { id: true, name: true, section: true } },
+        requestedStream: { select: { id: true, name: true } },
       },
     });
 
-    return sendSuccess(
-      res,
-      201,
-      admission,
-      "Admission request submitted successfully. Admin will review soon.",
-    );
+    return sendSuccess(res, 201, admission, "Admission request submitted");
   } catch (err) {
     if (err instanceof z.ZodError) {
       return sendError(
@@ -94,25 +73,27 @@ export const createAdmission = async (req, res) => {
         "VALIDATION_ERROR",
       );
     }
-    console.error("Create admission error:", err);
-    return sendError(
-      res,
-      500,
-      "Failed to submit admission request",
-      "INTERNAL_ERROR",
-    );
+    console.error(err);
+    return sendError(res, 500, "Failed to submit admission");
   }
 };
 
 // 2. Admin: List all admission requests
 export const getAdmissions = async (req, res) => {
-  const { status = "PENDING", page = 1, limit = 20, search } = req.query;
+  const { status, page = 1, limit = 20, search, classroomId } = req.query;
 
   try {
     const where = {
       schoolId: req.user.schoolId,
-      status: status.toUpperCase(),
     };
+
+    if (status && status !== "ALL") {
+      where.status = status.toUpperCase();
+    }
+
+    if (classroomId) {
+      where.requestedClassroomId = Number(classroomId); // ⭐ FIX
+    }
 
     if (search?.trim()) {
       where.OR = [
@@ -134,13 +115,26 @@ export const getAdmissions = async (req, res) => {
         include: {
           school: { select: { name: true } },
           academicYear: { select: { label: true } },
+          requestedClassroom: {
+            select: {
+              id: true,
+              name: true,
+              section: true,
+            },
+          },
+          requestedStream: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
           createdBy: { select: { email: true, role: true } },
-          student: { select: { id: true, name: true } }, // if approved
+          student: { select: { id: true, name: true } },
         },
       }),
     ]);
 
-    return sendSuccess(res, 200, admissions, "Admission requests fetched", {
+    return sendSuccess(res, 200, admissions, "Admissions fetched", {
       total,
       pages: Math.ceil(total / take),
       currentPage: Number(page),
@@ -149,43 +143,31 @@ export const getAdmissions = async (req, res) => {
       hasPrev: Number(page) > 1,
     });
   } catch (err) {
-    console.error("Get admissions error:", err);
-    return sendError(res, 500, "Failed to fetch admissions", "INTERNAL_ERROR");
+    console.error(err);
+    return sendError(res, 500, "Failed to fetch admissions");
   }
 };
 
 // 3. Admin: Get single admission request
 export const getAdmission = async (req, res) => {
-  const { id } = req.params;
-
   try {
     const admission = await prisma.admissionRequest.findUnique({
-      where: { id: Number(id) },
+      where: { id: Number(req.params.id) },
       include: {
         school: { select: { name: true } },
         academicYear: { select: { label: true } },
+        requestedClassroom: { select: { id: true, name: true, section: true } },
+        requestedStream: { select: { id: true, name: true } },
         createdBy: { select: { email: true, role: true } },
         student: { select: { id: true, name: true } },
       },
     });
 
-    if (!admission) {
-      return sendError(res, 404, "Admission request not found", "NOT_FOUND");
-    }
+    if (!admission) return sendError(res, 404, "Admission not found");
 
-    return sendSuccess(
-      res,
-      200,
-      admission,
-      "Admission request details fetched",
-    );
+    return sendSuccess(res, 200, admission, "Admission details fetched");
   } catch (err) {
-    return sendError(
-      res,
-      500,
-      "Failed to fetch admission request",
-      "INTERNAL_ERROR",
-    );
+    return sendError(res, 500, "Failed to fetch admission");
   }
 };
 
@@ -200,6 +182,7 @@ export const updateAdmission = async (req, res) => {
     });
 
     if (!admission) return sendError(res, 404, "Admission not found");
+
     if (admission.status !== "PENDING") {
       return sendError(
         res,
@@ -209,34 +192,41 @@ export const updateAdmission = async (req, res) => {
       );
     }
 
+    const data = {
+      name: updates.name,
+      email: updates.email,
+      gender: updates.gender,
+      previousSchoolName: updates.previousSchoolName,
+      previousClass: updates.previousClass,
+      previousGrade: updates.previousGrade,
+      promotedToClass: updates.promotedToClass,
+      requestedClassroomId: updates.requestedClassroomId,
+      requestedStreamId: updates.requestedStreamId,
+      academicYearId: updates.academicYearId,
+      notes: updates.notes,
+      parents: updates.parents ?? undefined,
+
+      ...(updates.dateOfBirth && {
+        dateOfBirth: new Date(updates.dateOfBirth),
+      }),
+      ...(updates.admissionDate && {
+        admissionDate: new Date(updates.admissionDate),
+      }),
+    };
+
     const updated = await prisma.admissionRequest.update({
       where: { id: Number(id) },
-      data: {
-        ...updates,
-        // Handle dates if sent as string
-        ...(updates.dateOfBirth && {
-          dateOfBirth: new Date(updates.dateOfBirth),
-        }),
-        ...(updates.admissionDate && {
-          admissionDate: new Date(updates.admissionDate),
-        }),
-        parents: updates.parents ? JSON.stringify(updates.parents) : undefined,
-      },
+      data,
       include: {
-        school: { select: { name: true } },
-        academicYear: { select: { label: true } },
+        requestedClassroom: { select: { name: true, section: true } },
+        requestedStream: { select: { name: true } },
       },
     });
 
-    return sendSuccess(
-      res,
-      200,
-      updated,
-      "Admission request updated successfully",
-    );
+    return sendSuccess(res, 200, updated, "Admission updated");
   } catch (err) {
-    console.error("Update admission error:", err);
-    return sendError(res, 500, "Failed to update admission", "INTERNAL_ERROR");
+    console.error(err);
+    return sendError(res, 500, "Failed to update admission");
   }
 };
 
@@ -246,71 +236,51 @@ export const approveAdmission = async (req, res) => {
   const { classroomId, streamId, academicYearId } = req.body;
 
   try {
-    const admission = await prisma.admissionRequest.findUnique({
-      where: { id: Number(id) },
-    });
+    const result = await prisma.$transaction(async (tx) => {
+      const admission = await tx.admissionRequest.findUnique({
+        where: { id: Number(id) },
+      });
 
-    if (!admission) return sendError(res, 404, "Admission request not found");
-    if (admission.status !== "PENDING") {
-      return sendError(
-        res,
-        400,
-        "This admission is already processed",
-        "INVALID_OPERATION",
-      );
-    }
+      if (!admission) throw new Error("NOT_FOUND");
+      if (admission.status !== "PENDING") throw new Error("ALREADY_PROCESSED");
 
-    // Prepare data for student creation
-    const studentData = {
-      ...admission,
-      classroomId: classroomId || admission.requestedClassroomId,
-      streamId: streamId || admission.requestedStreamId,
-      academicYearId: academicYearId || admission.academicYearId,
-      parents: admission.parents ? JSON.parse(admission.parents) : [],
-      schoolId: admission.schoolId,
-    };
+      const studentData = {
+        ...admission,
+        classroomId: classroomId || admission.requestedClassroomId,
+        streamId: streamId || admission.requestedStreamId,
+        academicYearId: academicYearId || admission.academicYearId,
+        parents: admission.parents || [],
+        schoolId: admission.schoolId,
+      };
 
-    // Create real student using service
-    const created = await createStudentService(
-      prisma,
-      studentData,
-      req.user.id,
-    );
+      const created = await createStudentService(tx, studentData, req.user.id);
 
-    // Mark admission as approved
-    const updatedAdmission = await prisma.admissionRequest.update({
-      where: { id: Number(id) },
-      data: {
-        status: "APPROVED",
-        approvedById: req.user.id,
-        studentId: created.student.id,
-      },
-      include: {
-        student: { select: { id: true, name: true } },
-      },
+      const updatedAdmission = await tx.admissionRequest.update({
+        where: { id: Number(id) },
+        data: {
+          status: "APPROVED",
+          approvedById: req.user.id,
+          studentId: created.student.id,
+        },
+      });
+
+      return { created, updatedAdmission };
     });
 
     return sendSuccess(
       res,
       200,
-      {
-        student: created.student,
-        enrollment: created.enrollment,
-        temporaryPassword: created.tempPassword,
-        createdParents: created.createdParents?.length
-          ? created.createdParents
-          : undefined,
-        admission: updatedAdmission,
-      },
-      "Admission approved and student enrolled successfully. Share temporary passwords securely with the student/parents.",
+      result,
+      "Admission approved & student enrolled",
     );
   } catch (err) {
-    console.error("Approve admission error:", err);
-    return sendError(res, 500, "Failed to approve admission", "INTERNAL_ERROR");
+    console.error(err);
+    return sendError(res, 500, "Failed to approve admission");
   }
 };
 
 // 6. Admin: Reject admission
+
 export const rejectAdmission = async (req, res) => {
   const { id } = req.params;
   const { notes } = req.body;
@@ -321,11 +291,12 @@ export const rejectAdmission = async (req, res) => {
     });
 
     if (!admission) return sendError(res, 404, "Admission not found");
+
     if (admission.status !== "PENDING") {
       return sendError(
         res,
         400,
-        "Cannot reject non-pending admission",
+        "Only pending admissions can be rejected",
         "INVALID_OPERATION",
       );
     }
@@ -336,11 +307,13 @@ export const rejectAdmission = async (req, res) => {
         status: "REJECTED",
         notes: notes || "Rejected by admin",
         approvedById: req.user.id,
+        updatedAt: new Date(),
       },
     });
 
-    return sendSuccess(res, 200, updated, "Admission request rejected");
+    return sendSuccess(res, 200, updated, "Admission rejected");
   } catch (err) {
-    return sendError(res, 500, "Failed to reject admission", "INTERNAL_ERROR");
+    console.error(err);
+    return sendError(res, 500, "Failed to reject admission");
   }
 };

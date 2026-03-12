@@ -46,7 +46,7 @@ export const createSubject = async (req, res) => {
 };
 
 export const getSubjects = async (req, res) => {
-  const { schoolId, page = 1, limit = 20 } = req.query;
+  const { schoolId, page = 1, limit = 100 } = req.query;
 
   try {
     const where = schoolId ? { schoolId: parseInt(schoolId) } : {};
@@ -148,5 +148,3 @@ export const deleteSubject = async (req, res) => {
     res.status(500).json({ error: "Failed to delete subject" });
   }
 };
-
-
