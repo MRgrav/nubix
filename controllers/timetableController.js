@@ -13,41 +13,55 @@ const timeToMinutes = (time) => {
 };
 
 export const createSlot = async (req, res) => {
-  const {
-    day,
-    slotType,
-    startTime,
-    endTime,
-    notes,
-    schoolId,
-    classroomId,
-    streamId,
-    subjectId,
-    teacherId,
-    academicYearId,
-  } = req.body;
-
-  const startMinutes = timeToMinutes(startTime);
-  const endMinutes = timeToMinutes(endTime);
-
-  if (startMinutes == null || endMinutes == null) {
-    return sendError(
-      res,
-      400,
-      "startTime and endTime are required in HH:mm format",
-    );
-  }
-
-  if (endMinutes <= startMinutes) {
-    return sendError(res, 400, "endTime must be after startTime");
-  }
-
   try {
+    let {
+      day,
+      slotType,
+      startTime,
+      endTime,
+      notes,
+      schoolId,
+      classroomId,
+      streamId,
+      subjectId,
+      teacherId,
+      academicYearId,
+    } = req.body;
+
+    const startMinutes = timeToMinutes(startTime);
+    const endMinutes = timeToMinutes(endTime);
+
+    if (startMinutes == null || endMinutes == null) {
+      return sendError(
+        res,
+        400,
+        "startTime and endTime are required in HH:mm format",
+      );
+    }
+
+    if (endMinutes <= startMinutes) {
+      return sendError(res, 400, "endTime must be after startTime");
+    }
+
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
       const activeYear = await getActiveAcademicYear(parseInt(schoolId));
       if (!activeYear) return sendError(res, 400, "No active academic year");
       resolvedAcademicYearId = activeYear.id;
+    }
+
+    // Slot type validation
+    if (slotType !== "CLASS") {
+      subjectId = null;
+      teacherId = null;
+    } else {
+      if (!subjectId && !teacherId) {
+        return sendError(
+          res,
+          400,
+          "CLASS slot requires subjectId or teacherId",
+        );
+      }
     }
 
     // Primary check: same classroom overlap
@@ -93,6 +107,24 @@ export const createSlot = async (req, res) => {
           res,
           409,
           "Teacher is already assigned to another slot at the same time",
+        );
+      }
+    }
+
+    if (streamId && classroomId) {
+      // Optional: ensure classroom allows this stream
+      const classroom = await prisma.classroom.findUnique({
+        where: { id: classroomId },
+        select: { allowedStreams: true },
+      });
+      if (
+        classroom.allowedStreams &&
+        !classroom.allowedStreams.includes(streamId)
+      ) {
+        return sendError(
+          res,
+          400,
+          "This stream is not allowed in this classroom",
         );
       }
     }
@@ -349,10 +381,12 @@ export const getMyStudentTimetable = async (req, res) => {
       where: {
         academicYearId: activeYear.id,
         classroomId: enrollment.classroomId,
+        OR: [{ streamId: null }, { streamId: enrollment.streamId }],
       },
       include: {
         subject: { select: { id: true, name: true, code: true } },
         teacher: { select: { id: true, name: true } },
+        stream: { select: { id: true, name: true } },
       },
       orderBy: [{ day: "asc" }, { startMinutes: "asc" }],
     });
@@ -378,6 +412,7 @@ export const getMyStudentTimetable = async (req, res) => {
         subject: slot.subject?.name || "N/A",
         subjectCode: slot.subject?.code || "",
         teacher: slot.teacher?.name || "N/A",
+        stream: slot.stream?.name || "Common",
       });
       return acc;
     }, {});
@@ -391,6 +426,7 @@ export const getMyStudentTimetable = async (req, res) => {
         academicYear: activeYear.label,
         className: enrollment.classroom.name,
         section: enrollment.classroom.section,
+        stream: enrollment.streamId ? enrollment.stream?.name : "Common",
       },
       "Your timetable fetched successfully",
     );
@@ -497,6 +533,34 @@ export const updateSlot = async (req, res) => {
 
     delete updates.startTime;
     delete updates.endTime;
+
+    if (updates.slotType && updates.slotType !== "CLASS") {
+      if (updates.subjectId !== undefined) {
+        return sendError(
+          res,
+          400,
+          `subjectId should not be set for ${updates.slotType} slots`,
+        );
+      }
+      if (updates.teacherId !== undefined) {
+        return sendError(
+          res,
+          400,
+          `teacherId should not be set for ${updates.slotType} slots`,
+        );
+      }
+      updates.subjectId = null;
+      updates.teacherId = null;
+    } else if (updates.slotType === "CLASS") {
+      // Optional: enforce subject or teacher required
+      if (!updates.subjectId && !updates.teacherId) {
+        return sendError(
+          res,
+          400,
+          "CLASS slot requires subjectId or teacherId",
+        );
+      }
+    }
 
     if (updates.subjectId) {
       updates.subject = { connect: { id: Number(updates.subjectId) } };

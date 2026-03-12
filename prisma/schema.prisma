@@ -61,9 +61,10 @@ model Stream {
 
   curriculumSubjects CurriculumSubject[]
 
-  feeStructures FeeStructure[]
-  timetableSlot TimetableSlot[]
-  Exam          Exam[]
+  feeStructures    FeeStructure[]
+  timetableSlot    TimetableSlot[]
+  Exam             Exam[]
+  AdmissionRequest AdmissionRequest[]
 
   @@index([name])
 }
@@ -178,7 +179,7 @@ model Student {
   admissionDate        DateTime?
   admissionReceiptNo   String?
   admissionReceiptLink String?
-  
+
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
 
@@ -432,9 +433,8 @@ model Classroom {
 
   teacherAssignments TeacherAssignment[]
   announcements      Announcement[]      @relation("ClassroomAnnouncements")
+  AdmissionRequest   AdmissionRequest[]
 }
-
-
 
 enum DayOfWeek {
   MONDAY
@@ -450,7 +450,6 @@ enum SlotType {
   CLASS
   BREAK
 }
-
 
 model Assignment {
   id          Int      @id @default(autoincrement())
@@ -1024,9 +1023,9 @@ model StudentElectiveChoice {
 }
 
 model AdmissionRequest {
-  id                   Int             @id @default(autoincrement())
+  id                   Int        @id @default(autoincrement())
   name                 String
-  email                String          @unique //student_email
+  email                String     @unique //student_email
   gender               Gender?
   dateOfBirth          DateTime?
   previousSchoolName   String?
@@ -1041,17 +1040,20 @@ model AdmissionRequest {
   parents              Json? // [{type, name, email, phone, ...}]
   electiveSubjects     Json? // [subjectId, ...]
   requestedClassroomId Int?
-  requestedStreamId    Int?
-  status               AdmissionStatus @default(PENDING)
-  notes                String? // Admin internal notes
-  schoolId             Int
-  academicYearId       Int?
-  createdById          Int? // if submitted by logged-in user
-  approvedById         Int? // admin who approved
-  studentId            Int?            @unique
-  student              Student?        @relation(fields: [studentId], references: [id])
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  requestedClassroom   Classroom? @relation(fields: [requestedClassroomId], references: [id])
+
+  requestedStreamId Int?
+  requestedStream   Stream?         @relation(fields: [requestedStreamId], references: [id])
+  status            AdmissionStatus @default(PENDING)
+  notes             String? // Admin internal notes
+  schoolId          Int
+  academicYearId    Int?
+  createdById       Int? // if submitted by logged-in user
+  approvedById      Int? // admin who approved
+  studentId         Int?            @unique
+  student           Student?        @relation(fields: [studentId], references: [id])
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   school       School        @relation(fields: [schoolId], references: [id])
   academicYear AcademicYear? @relation(fields: [academicYearId], references: [id])

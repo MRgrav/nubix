@@ -14,13 +14,12 @@ export const getAttendanceTableName = (academicYearLabel) => {
 
 /**
  * Get or create attendance table for an academic year
- * Creates the table if it doesn't exist
+ * Creates the table if it doesn't exist + proper unique indexes
  */
 export const ensureAttendanceTable = async (academicYearLabel) => {
   const tableName = getAttendanceTableName(academicYearLabel);
   const quotedTableName = `"${tableName}"`;
 
-  // Check if table exists
   const tableExistsResult = await prisma.$queryRawUnsafe(
     `SELECT EXISTS (
       SELECT FROM information_schema.tables 
@@ -31,29 +30,45 @@ export const ensureAttendanceTable = async (academicYearLabel) => {
   );
 
   if (!tableExistsResult[0].exists) {
-    // Create table with same structure as Attendance model
+    // ─── UPDATED: Use DATE type consistently ───
     await prisma.$executeRawUnsafe(`
       CREATE TABLE ${quotedTableName} (
         id SERIAL PRIMARY KEY,
-        date TIMESTAMP NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED')),
+        date DATE NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('PRESENT','ABSENT','LATE','EXCUSED')),
         note TEXT,
         "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         "studentId" INTEGER REFERENCES "Student"(id) ON DELETE CASCADE,
         "staffId" INTEGER REFERENCES "Staff"(id) ON DELETE CASCADE,
         "academicYearId" INTEGER NOT NULL REFERENCES "AcademicYear"(id) ON DELETE CASCADE,
-        "subjectId" INTEGER REFERENCES "Subject"(id) ON DELETE SET NULL,
-        CONSTRAINT "${tableName}_student_unique" UNIQUE ("studentId", date, "academicYearId", "subjectId"),
-        CONSTRAINT "${tableName}_staff_unique" UNIQUE ("staffId", date, "academicYearId")
+        "subjectId" INTEGER REFERENCES "Subject"(id) ON DELETE SET NULL
       )
     `);
 
+    // ─── IMPORTANT CHANGE: Partial unique indexes instead of single UNIQUE ───
+    // Prevents multiple same-day records when subjectId IS NULL
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "${tableName}_day_unique_non_subject"
+      ON ${quotedTableName} ("studentId", date, "academicYearId")
+      WHERE "subjectId" IS NULL;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "${tableName}_subject_unique"
+      ON ${quotedTableName} ("studentId", date, "academicYearId", "subjectId")
+      WHERE "subjectId" IS NOT NULL;
+    `);
+
+    // Staff unique remains the same
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX "${tableName}_staff_unique"
+      ON ${quotedTableName} ("staffId", date, "academicYearId");
+    `);
+
+    // Indexes
     await prisma.$executeRawUnsafe(
       `CREATE INDEX "${tableName}_student_idx" ON ${quotedTableName}("studentId")`,
-    );
-    await prisma.$executeRawUnsafe(
-      `CREATE INDEX "${tableName}_staff_idx" ON ${quotedTableName}("staffId")`,
     );
     await prisma.$executeRawUnsafe(
       `CREATE INDEX "${tableName}_date_idx" ON ${quotedTableName}(date)`,
@@ -64,9 +79,26 @@ export const ensureAttendanceTable = async (academicYearLabel) => {
     await prisma.$executeRawUnsafe(
       `CREATE INDEX "${tableName}_subject_idx" ON ${quotedTableName}("subjectId")`,
     );
+
+    // ─── NEW: Add trigger to auto-update updatedAt on any UPDATE ───
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION update_updated_at_column()
+      RETURNS TRIGGER AS $$
+      BEGIN
+         NEW."updatedAt" = CURRENT_TIMESTAMP;
+         RETURN NEW;
+      END;
+      $$ language 'plpgsql';
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER update_${tableName}_updated_at
+      BEFORE UPDATE ON ${quotedTableName}
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    `);
   }
 
-  return `"${tableName}"`;
+  return quotedTableName;
 };
 
 /**
@@ -81,7 +113,7 @@ export const getAcademicYearLabel = async (academicYearId) => {
 };
 
 /**
- * Insert attendance into year-specific table
+ * Insert ONLY (no upsert) — callers should check existence first
  */
 export const insertAttendance = async (data, academicYearLabel) => {
   const tableName = await ensureAttendanceTable(academicYearLabel);
@@ -89,12 +121,17 @@ export const insertAttendance = async (data, academicYearLabel) => {
   const { studentId, staffId, date, status, note, academicYearId, subjectId } =
     data;
 
+  // Always normalize to YYYY-MM-DD
+  const attendanceDate = new Date(date).toISOString().split("T")[0];
+
   const result = await prisma.$queryRawUnsafe(
-    `INSERT INTO ${tableName} 
-    (date, status, note, "studentId", "staffId", "academicYearId", "subjectId", "createdAt")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
-    RETURNING *`,
-    date,
+    `
+    INSERT INTO ${tableName} 
+      (date, status, note, "studentId", "staffId", "academicYearId", "subjectId", "createdAt", "updatedAt")
+    VALUES ($1::date, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    RETURNING *
+    `,
+    attendanceDate,
     status,
     note || null,
     studentId || null,
@@ -260,8 +297,9 @@ export const attendanceExists = async (where, academicYearLabel) => {
   }
 
   if (where.date) {
-    query += ` AND date = $${paramIndex++}`;
-    params.push(where.date);
+    const attendanceDateStr = new Date(where.date).toISOString().split("T")[0];
+    query += ` AND date = $${paramIndex++}::date`; // ← explicit cast + string
+    params.push(attendanceDateStr);
   }
 
   if (where.academicYearId) {
@@ -285,73 +323,93 @@ export const attendanceExists = async (where, academicYearLabel) => {
 };
 
 /**
- * Bulk upsert attendance records — guaranteed no duplicates
- * Uses transaction + upsert + existence check fallback
+ * Bulk insert with smart handling:
+ * - If not exists → insert
+ * - If exists → update only if the current user is allowed to update it
  */
-export const bulkInsertAttendance = async (records, academicYearLabel) => {
+export const bulkInsertAttendance = async (records, academicYearLabel, req) => {
+  // ↑ Added req as parameter so we can check permissions
+
   if (!records || records.length === 0) {
-    return { inserted: 0, updated: 0, skipped: 0, errors: [] };
+    return { inserted: 0, updated: 0, skipped: 0, conflicts: [] };
   }
 
   const tableName = await ensureAttendanceTable(academicYearLabel);
-  const results = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+  const results = { inserted: 0, updated: 0, skipped: 0, conflicts: [] };
 
-  // Use Prisma transaction for atomicity
   await prisma.$transaction(async (tx) => {
-    const batchSize = 50; // smaller batch to avoid param limit
+    for (const record of records) {
+      try {
+        const existing = await attendanceExists(
+          {
+            studentId: record.studentId,
+            date: record.date,
+            academicYearId: record.academicYearId,
+            subjectId: record.subjectId,
+          },
+          academicYearLabel,
+        );
 
-    for (let i = 0; i < records.length; i += batchSize) {
-      const batch = records.slice(i, i + batchSize);
+        if (existing) {
+          // ─── Permission check for update ───
+          const canUpdate =
+            canUpdateAttendance(req) ||
+            (
+              await canTeacherMarkAttendanceFor(req, {
+                studentId: record.studentId,
+                subjectId: record.subjectId,
+                date: record.date,
+                academicYearId: record.academicYearId,
+              })
+            ).allowed;
 
-      for (const record of batch) {
-        try {
-          // 1. Check if already exists (safe & fast)
-          const existing = await tx.$queryRawUnsafe(
-            `SELECT id FROM ${tableName} 
-             WHERE "studentId" = $1 
-               AND date = $2 
-               AND "academicYearId" = $3 
-               AND ("subjectId" = $4 OR ("subjectId" IS NULL AND $4 IS NULL))
-             LIMIT 1`,
-            record.studentId,
-            record.date,
-            record.academicYearId,
-            record.subjectId,
-          );
-
-          if (existing.length > 0) {
-            // 2. Update existing record
+          if (canUpdate) {
             await tx.$executeRawUnsafe(
-              `UPDATE ${tableName} 
-               SET status = $1, note = $2, "updatedAt" = CURRENT_TIMESTAMP
-               WHERE id = $3`,
+              `
+              UPDATE ${tableName}
+              SET 
+                status = $1,
+                note = $2,
+                "updatedAt" = CURRENT_TIMESTAMP
+              WHERE id = $3
+              `,
               record.status,
               record.note || null,
-              existing[0].id,
+              existing.id,
             );
             results.updated++;
           } else {
-            // 3. Insert new
-            await tx.$executeRawUnsafe(
-              `INSERT INTO ${tableName} 
-                (date, status, note, "studentId", "staffId", "academicYearId", "subjectId", "createdAt", "updatedAt")
-               VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              record.date,
-              record.status,
-              record.note || null,
-              record.studentId,
-              record.staffId || null,
-              record.academicYearId,
-              record.subjectId,
-            );
-            results.inserted++;
+            results.skipped++;
+            results.conflicts.push({
+              studentId: record.studentId,
+              date: new Date(record.date).toISOString().split("T")[0],
+              reason:
+                "Attendance already exists and you don't have permission to update it",
+            });
           }
-        } catch (err) {
-          results.errors.push({
-            record: { ...record, index: i + batch.indexOf(record) },
-            error: err.message,
-          });
+        } else {
+          // Insert new
+          await tx.$executeRawUnsafe(
+            `
+            INSERT INTO ${tableName} 
+              (date, status, note, "studentId", "staffId", "academicYearId", "subjectId", "createdAt", "updatedAt")
+            VALUES ($1::date, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `,
+            new Date(record.date).toISOString().split("T")[0],
+            record.status,
+            record.note || null,
+            record.studentId,
+            record.staffId || null,
+            record.academicYearId,
+            record.subjectId || null,
+          );
+          results.inserted++;
         }
+      } catch (err) {
+        results.conflicts.push({
+          record,
+          error: err.message,
+        });
       }
     }
   });

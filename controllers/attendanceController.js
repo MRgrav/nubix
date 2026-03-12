@@ -111,47 +111,19 @@ export const markStudentAttendance = async (req, res) => {
 
     console.log(`Attendance authorized via ${auth.source}`);
 
-    // Check if attendance already exists
-    const existing = await attendanceExists(
+    // ⭐ UPSERT INSERT
+    const attendance = await insertAttendance(
       {
         studentId: parseInt(studentId),
+        staffId: null,
         date: attendanceDate,
+        status,
+        note: note || null,
         academicYearId: resolvedAcademicYearId,
         subjectId: subjectId ? parseInt(subjectId) : null,
       },
       academicYearLabel,
     );
-
-    let attendance;
-    if (existing) {
-      // Update Only allowrd for ADMIN
-      if (!canUpdateAttendance(req)) {
-        return sendError(
-          res,
-          403,
-          "Only ADMIN can update existing attendance records",
-        );
-      }
-      attendance = await updateAttendance(
-        existing.id,
-        { status, note: note || null },
-        academicYearLabel,
-      );
-    } else {
-      // Insert new attendance into year-specific table
-      attendance = await insertAttendance(
-        {
-          studentId: parseInt(studentId),
-          staffId: null,
-          date: attendanceDate,
-          status,
-          note: note || null,
-          academicYearId: resolvedAcademicYearId,
-          subjectId: subjectId ? parseInt(subjectId) : null,
-        },
-        academicYearLabel,
-      );
-    }
 
     // Fetch related data for response
     const academicYear = await prisma.academicYear.findUnique({
@@ -159,7 +131,7 @@ export const markStudentAttendance = async (req, res) => {
       select: { id: true, label: true },
     });
 
-    const student1 = await prisma.student.findUnique({
+    const studentInfo = await prisma.student.findUnique({
       where: { id: parseInt(studentId) },
       select: { id: true, name: true, grade: true },
     });
@@ -176,7 +148,7 @@ export const markStudentAttendance = async (req, res) => {
       201,
       {
         ...attendance,
-        student: student1,
+        student: studentInfo,
         subject,
         academicYear,
       },
@@ -204,12 +176,7 @@ export const markBulkStudentAttendance = async (req, res) => {
   try {
     const { date, academicYearId, attendances } = req.body;
 
-    if (
-      !date ||
-      !attendances ||
-      !Array.isArray(attendances) ||
-      attendances.length === 0
-    ) {
+    if (!date || !Array.isArray(attendances) || attendances.length === 0) {
       return sendError(
         res,
         400,
@@ -217,8 +184,8 @@ export const markBulkStudentAttendance = async (req, res) => {
       );
     }
 
-    // Resolve academic year
     let resolvedAcademicYearId = academicYearId;
+
     if (!resolvedAcademicYearId) {
       const activeYear = await getActiveAcademicYear();
       if (!activeYear) {
@@ -230,23 +197,29 @@ export const markBulkStudentAttendance = async (req, res) => {
     const academicYearLabel = await getAcademicYearLabel(
       resolvedAcademicYearId,
     );
+
     if (!academicYearLabel) {
       return sendError(res, 400, "Academic year label not found");
     }
 
     const attendanceDate = new Date(date);
+
     if (isNaN(attendanceDate.getTime())) {
       return sendError(res, 400, "Invalid date format");
     }
 
-    // ─── 1. Authorization check for every student ───
+    // ⭐ Normalize date
+    const normalizedDate = attendanceDate.toISOString().split("T")[0];
+
+    // ───────── Authorization ─────────
+
     for (const att of attendances) {
       if (!att.studentId || !att.status) continue;
 
       const auth = await canTeacherMarkAttendanceFor(req, {
         studentId: parseInt(att.studentId),
         subjectId: att.subjectId ? parseInt(att.subjectId) : null,
-        date: attendanceDate,
+        date: normalizedDate,
         academicYearId: resolvedAcademicYearId,
       });
 
@@ -263,18 +236,20 @@ export const markBulkStudentAttendance = async (req, res) => {
       }
     }
 
-    // ─── 2. Prepare & validate records ───
+    // ───────── Validation ─────────
+
     const validRecords = [];
-    const errors = [];
-    const studentClassroomMap = new Map(); // studentId → classroomId
-    const subjectRequirementMap = new Map(); // classroomId → boolean (requires subject)
-    const seenInBatch = new Set(); // "studentId-subjectId" keys
+    const validationErrors = [];
+
+    const studentClassroomMap = new Map();
+    const subjectRequirementMap = new Map();
+    const seenInBatch = new Set();
 
     for (let i = 0; i < attendances.length; i++) {
       const att = attendances[i];
 
       if (!att.studentId || !att.status) {
-        errors.push({
+        validationErrors.push({
           index: i,
           studentId: att.studentId,
           error: "studentId and status are required",
@@ -285,10 +260,11 @@ export const markBulkStudentAttendance = async (req, res) => {
       const studentId = parseInt(att.studentId);
       const subjectId = att.subjectId ? parseInt(att.subjectId) : null;
 
-      // ─── Get classroom (cached) ───
       let classroomId = studentClassroomMap.get(studentId);
+
       if (classroomId === undefined) {
         classroomId = await getStudentClassroomId(studentId);
+
         if (!classroomId) {
           errors.push({
             index: i,
@@ -297,19 +273,19 @@ export const markBulkStudentAttendance = async (req, res) => {
           });
           continue;
         }
+
         studentClassroomMap.set(studentId, classroomId);
       }
 
-      // ─── Get subject requirement (cached per classroom) ───
       let requiresSubject = subjectRequirementMap.get(classroomId);
+
       if (requiresSubject === undefined) {
         requiresSubject = await isSubjectWiseRequiredForClass(classroomId);
         subjectRequirementMap.set(classroomId, requiresSubject);
       }
 
-      // ─── Enforce subject consistency ───
       if (requiresSubject && !subjectId) {
-        errors.push({
+        validationErrors.push({
           index: i,
           studentId,
           error:
@@ -319,7 +295,7 @@ export const markBulkStudentAttendance = async (req, res) => {
       }
 
       if (!requiresSubject && subjectId) {
-        errors.push({
+        validationErrors.push({
           index: i,
           studentId,
           error: "Subject ID is not allowed for this class",
@@ -327,10 +303,10 @@ export const markBulkStudentAttendance = async (req, res) => {
         continue;
       }
 
-      // ─── Prevent duplicate in this batch ───
-      const uniqueKey = `${studentId}-${subjectId ?? "null"}`;
+      const uniqueKey = `${studentId}-${subjectId ?? "null"}-${normalizedDate}`;
+
       if (seenInBatch.has(uniqueKey)) {
-        errors.push({
+        validationErrors.push({
           index: i,
           studentId,
           error:
@@ -338,13 +314,13 @@ export const markBulkStudentAttendance = async (req, res) => {
         });
         continue;
       }
+
       seenInBatch.add(uniqueKey);
 
-      // Record is valid
       validRecords.push({
         studentId,
         staffId: null,
-        date: attendanceDate,
+        date: attendanceDate, // ⭐ normalized
         status: att.status,
         note: att.note || null,
         academicYearId: resolvedAcademicYearId,
@@ -358,28 +334,36 @@ export const markBulkStudentAttendance = async (req, res) => {
       });
     }
 
-    // ─── 3. Bulk upsert into the year-specific table ───
-    const results = await bulkInsertAttendance(validRecords, academicYearLabel);
+    // ───────── DB UPSERT ─────────
 
-    // ─── 4. Final response ───
+    const results = await bulkInsertAttendance(
+      validRecords,
+      academicYearLabel,
+      req,
+    );
+
+    const hasChanges = results.inserted + results.updated > 0;
+
     return sendSuccess(res, 201, {
-      message: "Bulk attendance processed successfully",
-      date: attendanceDate.toISOString().split("T")[0],
+      message: hasChanges
+        ? "Bulk attendance processed successfully"
+        : "No new changes — all records were already marked or skipped",
+      date: normalizedDate,
       academicYearId: resolvedAcademicYearId,
       summary: {
         totalReceived: attendances.length,
         validProcessed: validRecords.length,
-        inserted: results.inserted || 0,
-        updated: results.updated || 0,
-        errors: (errors.length || 0) + (results.errors?.length || 0),
+        inserted: results.inserted,
+        updated: results.updated,
+        skipped: results.skipped,
+        conflicts: results.conflicts?.length || 0,
       },
-      errors:
-        errors.length || results.errors?.length
-          ? [...errors, ...(results.errors || [])]
-          : undefined,
+      conflicts: results.conflicts?.length ? results.conflicts : undefined,
+      validationErrors: validationErrors.length ? validationErrors : undefined,
     });
   } catch (err) {
     console.error("Bulk attendance error:", err);
+
     return sendError(
       res,
       500,
