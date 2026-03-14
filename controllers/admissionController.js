@@ -496,7 +496,6 @@ export const approveAdmission = async (req, res) => {
       let student;
 
       if (admission.isReAdmission && admission.studentId) {
-        // Re-admission: update existing student
         student = await tx.student.update({
           where: { id: admission.studentId },
           data: {
@@ -507,7 +506,7 @@ export const approveAdmission = async (req, res) => {
           },
         });
       } else {
-        // New admission: create student
+        // Create student WITHOUT classroom/stream first
         const studentData = {
           name: admission.name,
           email: admission.email,
@@ -515,9 +514,6 @@ export const approveAdmission = async (req, res) => {
           dateOfBirth: admission.dateOfBirth,
           aadhaarNumber: admission.aadhaarNumber,
           permanentEducationNumber: admission.permanentEducationNumber,
-          classroomId: classroomId || admission.requestedClassroomId,
-          streamId: streamId || admission.requestedStreamId,
-          academicYearId: academicYearId || admission.academicYearId,
           schoolId: admission.schoolId,
           rollNo: rollNo || null,
           currentAddress: admission.currentAddress
@@ -535,6 +531,47 @@ export const approveAdmission = async (req, res) => {
           req.user.id,
         );
         student = created.student;
+
+        // NOW enroll (create studentStream)
+        const ayId = academicYearId || admission.academicYearId;
+        if (!ayId) throw new Error("No academic year provided");
+
+        const finalClassroomId = classroomId || admission.requestedClassroomId;
+        const finalStreamId = streamId || admission.requestedStreamId;
+
+        if (!finalClassroomId) {
+          throw new Error("Classroom ID required for new student enrollment");
+        }
+
+        // Check for duplicate enrollment
+        const existingEnroll = await tx.studentStream.findUnique({
+          where: {
+            academicYearId_studentId: {
+              academicYearId: ayId,
+              studentId: student.id,
+            },
+          },
+        });
+
+        if (existingEnroll) {
+          throw new Error("Student already enrolled in this academic year");
+        }
+
+        await tx.studentStream.create({
+          data: {
+            studentId: student.id,
+            academicYearId: ayId,
+            classroomId: Number(finalClassroomId),
+            streamId: finalStreamId ? Number(finalStreamId) : null,
+            rollNo: rollNo || null,
+          },
+        });
+
+        // Update student's direct classroom reference
+        await tx.student.update({
+          where: { id: student.id },
+          data: { classroomId: Number(finalClassroomId) },
+        });
       }
 
       // Update admission
@@ -559,11 +596,27 @@ export const approveAdmission = async (req, res) => {
     );
   } catch (err) {
     console.error("Approve admission error:", err);
+
+    if (err.code === "P2002") {
+      return sendError(
+        res,
+        409,
+        "Student is already enrolled in this academic year",
+        "ENROLLMENT_CONFLICT",
+      );
+    }
+
     if (err.message === "NOT_FOUND")
       return sendError(res, 404, "Admission not found");
     if (err.message === "ALREADY_PROCESSED")
       return sendError(res, 400, "Admission already processed");
-    return sendError(res, 500, "Failed to approve admission", err.message);
+
+    return sendError(
+      res,
+      500,
+      "Failed to approve admission",
+      err.message || "Internal error",
+    );
   }
 };
 

@@ -1,3 +1,4 @@
+// controllers\studentStreamController.js
 import prisma from "../models/prisma.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { generateRollNo } from "../utils/rollNoGenerator.js";
