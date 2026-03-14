@@ -23,8 +23,10 @@ export async function getStudentSubjects(
     },
   });
 
-  if (!enrollment) {
-    console.warn(`No active enrollment for student ${studentId}`);
+  if (!enrollment || !enrollment.classroom?.name) {
+    console.warn(
+      `No active enrollment for student ${studentId} and ${className}`,
+    );
     return [];
   }
 
@@ -117,7 +119,8 @@ export async function validateElectives(
 
   if (!enrollment) return false;
 
-  const className = enrollment.classroom.name.trim().replace(/^Class\s+/i, "");
+  const className =
+    enrollment?.classroom?.name?.trim()?.replace(/^Class\s+/i, "") || "";
 
   const validCount = await tx.curriculumSubject.count({
     where: {
@@ -148,9 +151,15 @@ export async function validateElectivesForEnrollment(
     },
   });
 
-  if (!enrollment) return false;
+  if (!enrollment || !enrollment.classroom?.name) {
+    console.warn(
+      `No active enrollment for student ${studentId} and ${className}`,
+    );
+    return [];
+  }
 
-  const className = enrollment.classroom.name.trim().replace(/^Class\s+/i, "");
+  const className =
+    enrollment?.classroom?.name?.trim()?.replace(/^Class\s+/i, "") || "";
 
   const validCount = await tx.curriculumSubject.count({
     where: {
