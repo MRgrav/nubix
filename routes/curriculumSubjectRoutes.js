@@ -1,4 +1,3 @@
-
 import express from "express";
 import {
   createCurriculumSubject,
@@ -20,7 +19,7 @@ router.get("/", authorize("ADMIN", "STAFF", "STUDENT"), getCurriculumSubjects);
 router.get(
   "/class",
   authorize("ADMIN", "STAFF", "STUDENT"),
-  getSubjectsForClass
+  getSubjectsForClass,
 ); // Useful endpoint
 router.put("/:id", authorize("ADMIN", "STAFF"), updateCurriculumSubject);
 router.delete("/:id", authorize("ADMIN", "STAFF"), deleteCurriculumSubject);
