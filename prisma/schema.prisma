@@ -441,6 +441,7 @@ model Classroom {
   teacherAssignments TeacherAssignment[]
   announcements      Announcement[]      @relation("ClassroomAnnouncements")
   AdmissionRequest   AdmissionRequest[]
+  curriculumSubjects CurriculumSubject[]
 }
 
 enum DayOfWeek {
@@ -697,12 +698,12 @@ enum CurriculumCategory {
 }
 
 model CurriculumSubject {
-  id Int @id @default(autoincrement())
-
+  id             Int          @id @default(autoincrement())
   academicYearId Int
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
-  className String // e.g., "Class 11"
+  classroomId Int? // ← NEW: replace className
+  classroom   Classroom? @relation(fields: [classroomId], references: [id], onDelete: SetNull)
 
   streamId Int?
   stream   Stream? @relation(fields: [streamId], references: [id], onDelete: SetNull)
@@ -721,9 +722,9 @@ model CurriculumSubject {
 
   studentElectiveChoices StudentElectiveChoice[]
 
-  @@unique([academicYearId, className, streamId, subjectId])
+  @@unique([academicYearId, classroomId, streamId, subjectId]) // ← updated unique constraint
   @@index([academicYearId])
-  @@index([className])
+  @@index([classroomId])
   @@index([streamId])
   @@index([subjectId])
 }
@@ -1149,7 +1150,6 @@ enum AdmissionStatus {
   APPROVED
   REJECTED
   WAITLISTED
-  
 }
 
 enum AdmissionCategory {
