@@ -4,7 +4,6 @@ import bcrypt from "bcryptjs";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { generateRollNo } from "../utils/rollNoGenerator.js";
 import { generateSecurePassword } from "../controllers/authController.js";
-
 export async function createStudentService(tx, inputData, createdById = null) {
   const {
     name,
@@ -30,9 +29,6 @@ export async function createStudentService(tx, inputData, createdById = null) {
     electiveCurriculumSubjectIds = [],
   } = inputData;
 
-  // ────────────────────────────────────────────────
-  // Collect all temporary passwords here
-  // ────────────────────────────────────────────────
   const tempPasswords = {
     student: null,
     parents: [],
@@ -77,7 +73,7 @@ export async function createStudentService(tx, inputData, createdById = null) {
 
   let enrollment = null;
 
-  // 3. Enroll in classroom/stream if provided
+  // 3. Enroll in classroom/stream if provided (only after student is created)
   if (classroomId) {
     let ayId = academicYearId;
     if (!ayId) {
@@ -123,7 +119,6 @@ export async function createStudentService(tx, inputData, createdById = null) {
     let parentTempPassword = null;
 
     if (parentUser) {
-      // Reuse existing parent
       parent = await tx.parent.findFirst({ where: { userId: parentUser.id } });
       if (!parent) {
         parent = await tx.parent.create({
@@ -138,7 +133,6 @@ export async function createStudentService(tx, inputData, createdById = null) {
         });
       }
     } else {
-      // Create new parent + user
       parentTempPassword = generateSecurePassword();
       const parentHash = await bcrypt.hash(parentTempPassword, 10);
 
@@ -169,7 +163,6 @@ export async function createStudentService(tx, inputData, createdById = null) {
       });
     }
 
-    // Link to student (upsert to avoid duplicates)
     await tx.studentParent.upsert({
       where: {
         studentId_parentId: {
@@ -186,10 +179,19 @@ export async function createStudentService(tx, inputData, createdById = null) {
     });
   }
 
-  // 5. Assign electives (if any and enrollment exists)
-  if (electiveCurriculumSubjectIds.length && enrollment) {
-    // Your existing validation logic here (if any)
-    // Example:
+  // 5. Assign electives ONLY if enrollment exists
+  if (electiveCurriculumSubjectIds.length > 0 && enrollment) {
+    // Validate only after enrollment is created
+    const isValid = await validateElectivesForEnrollment(
+      tx,
+      enrollment.id,
+      electiveCurriculumSubjectIds,
+    );
+
+    if (!isValid) {
+      throw new Error("Invalid elective subjects for this enrollment");
+    }
+
     await tx.studentElectiveChoice.createMany({
       data: electiveCurriculumSubjectIds.map((subjectId) => ({
         studentId: student.id,
@@ -201,9 +203,7 @@ export async function createStudentService(tx, inputData, createdById = null) {
     });
   }
 
-  // ────────────────────────────────────────────────
-  // Return everything the controller needs
-  // ────────────────────────────────────────────────
+  // Return
   return {
     student,
     user,
