@@ -23,9 +23,9 @@ export async function getStudentSubjects(
     },
   });
 
-  if (!enrollment || !enrollment.classroom?.name) {
+  if (!enrollment) {
     console.warn(
-      `No active enrollment for student ${studentId} and ${className}`,
+      `No active enrollment for student ${studentId}`,
     );
     return [];
   }
@@ -151,9 +151,9 @@ export async function validateElectivesForEnrollment(
     },
   });
 
-  if (!enrollment || !enrollment.classroom?.name) {
+  if (!enrollment) {
     console.warn(
-      `No active enrollment for student ${studentId} and ${className}`,
+      `No active enrollment for student ${studentId}`,
     );
     return [];
   }
