@@ -39,7 +39,6 @@ model AcademicYear {
   lateFeeConfigs         LateFeeConfig[]
   studentTransports      StudentTransport[]
   studentElectiveChoices StudentElectiveChoice[]
-  admissionRequests      AdmissionRequest[]
   BoardVersion           BoardVersion[]
   ExamConfig             ExamConfig[]
   gradingSchemes         GradingScheme[]
@@ -209,7 +208,13 @@ model Student {
   parents StudentParent[]
 
   studentElectiveChoices StudentElectiveChoice[]
-  admissionRequest       AdmissionRequest?
+
+  currentAddressId Int?
+  currentAddress   Address? @relation("StudentCurrentAddress", fields: [currentAddressId], references: [id])
+
+  permanentAddressId Int?
+  permanentAddress   Address?           @relation("StudentPermanentAddress", fields: [permanentAddressId], references: [id])
+  admissions         AdmissionRequest[]
 }
 
 model Staff {
@@ -349,6 +354,8 @@ model User {
 
   calculatedResults ExamResult[] @relation("ResultCalculatedBy")
   updatedResults    ExamResult[] @relation("ResultUpdatedBy")
+
+  uploadedDocuments AdmissionDocument[] @relation("UploadedDocuments")
 }
 
 model Attendance {
@@ -1023,57 +1030,196 @@ model StudentElectiveChoice {
 }
 
 model AdmissionRequest {
-  id                   Int        @id @default(autoincrement())
-  name                 String
-  email                String     @unique //student_email
-  gender               Gender?
-  dateOfBirth          DateTime?
-  previousSchoolName   String?
-  previousClass        String?
-  previousGrade        String?
-  promotedToClass      String?
-  totalAdmissionAmount Float?
-  monthlyFees          Float?
-  admissionDate        DateTime?
-  admissionReceiptNo   String?
-  admissionReceiptLink String? // URL to receipt/document
-  parents              Json? // [{type, name, email, phone, ...}]
-  electiveSubjects     Json? // [subjectId, ...]
+  id            Int     @id @default(autoincrement())
+  applicationNo String? @unique
+
+  name                     String
+  email                    String
+  gender                   Gender?
+  dateOfBirth              DateTime?
+  aadhaarNumber            String?
+  permanentEducationNumber String?
+
+  currentAddressId Int?
+  currentAddress   Address? @relation("AdmissionCurrentAddress", fields: [currentAddressId], references: [id])
+
+  permanentAddressId Int?
+  permanentAddress   Address? @relation("AdmissionPermanentAddress", fields: [permanentAddressId], references: [id])
+
+  category           AdmissionCategory?
+  isStaffWard        Boolean            @default(false)
+  hasSiblingInSchool Boolean            @default(false)
+
+  previousSchoolName            String?
+  previousSchoolAddress         String?
+  previousClass                 String?
+  previousGrade                 String?
+  totalSubjectsInPrevClass      Int?
+  totalMarksObtainedInPrevClass Int?
+  fullMarksInPrevClass          Int?
+
+  admissionForClass String?
+
   requestedClassroomId Int?
   requestedClassroom   Classroom? @relation(fields: [requestedClassroomId], references: [id])
 
   requestedStreamId Int?
-  requestedStream   Stream?         @relation(fields: [requestedStreamId], references: [id])
-  status            AdmissionStatus @default(PENDING)
-  notes             String? // Admin internal notes
-  schoolId          Int
-  academicYearId    Int?
-  createdById       Int? // if submitted by logged-in user
-  approvedById      Int? // admin who approved
-  studentId         Int?            @unique
-  student           Student?        @relation(fields: [studentId], references: [id])
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  requestedStream   Stream? @relation(fields: [requestedStreamId], references: [id])
 
-  school       School        @relation(fields: [schoolId], references: [id])
-  academicYear AcademicYear? @relation(fields: [academicYearId], references: [id])
-  createdBy    User?         @relation("CreatedAdmissions", fields: [createdById], references: [id])
-  approvedBy   User?         @relation("ApprovedAdmissions", fields: [approvedById], references: [id])
+  parents          Json?
+  electiveSubjects Json?
+
+  totalAdmissionAmount Float?
+  monthlyFees          Float?
+  admissionReceiptNo   String?
+  admissionReceiptLink String?
+
+  documents AdmissionDocument[]
+
+  status          AdmissionStatus @default(PENDING)
+  appliedAt       DateTime        @default(now())
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  notes           String?
+
+  schoolId Int
+  school   School @relation(fields: [schoolId], references: [id])
+
+  createdById Int?
+  createdBy   User? @relation("CreatedAdmissions", fields: [createdById], references: [id])
+
+  approvedById Int?
+  approvedBy   User? @relation("ApprovedAdmissions", fields: [approvedById], references: [id])
+
+  studentId Int?
+  student   Student? @relation(fields: [studentId], references: [id])
+
+  isReAdmission Boolean @default(false)
+
+  isArchived Boolean   @default(false)
+  archivedAt DateTime?
 
   @@index([schoolId, status])
-  @@index([academicYearId])
-  @@index([status])
+  @@index([email])
+  @@index([isArchived])
+}
+
+model AdmissionDocument {
+  id Int @id @default(autoincrement())
+
+  // Document metadata
+  documentType  AdmissionDocumentType // e.g., MARKSHEET, PHOTO, RECEIPT, FORM, AADHAAR, etc.
+  title         String? // e.g., "Class 10 Marksheet", "Admission Receipt"
+  fileUrl       String // S3 / Cloudinary / local URL
+  fileName      String
+  mimeType      String? // e.g., image/jpeg, application/pdf
+  fileSizeBytes Int?
+  uploadedAt    DateTime              @default(now())
+
+  // Who uploaded (optional audit)
+  uploadedById Int?
+  uploadedBy   User? @relation("UploadedDocuments", fields: [uploadedById], references: [id])
+
+  // Link to admission request
+  admissionRequestId Int
+  admissionRequest   AdmissionRequest @relation(fields: [admissionRequestId], references: [id], onDelete: Cascade)
+
+  @@index([admissionRequestId])
+  @@index([documentType])
+  @@index([uploadedAt])
+}
+
+enum AdmissionDocumentType {
+  ADMISSION_FORM
+  PHOTO
+  MARKSHEET_PREV_CLASS
+  TRANSFER_CERTIFICATE
+  AADHAAR_CARD
+  BIRTH_CERTIFICATE
+  RECEIPT_ADMISSION_FEE
+  OTHER_CERTIFICATE
+  OTHER_DOCUMENT
 }
 
 enum AdmissionStatus {
   PENDING
+  UNDER_REVIEW
+  SHORTLISTED
   APPROVED
   REJECTED
+  WAITLISTED
+  
+}
+
+enum AdmissionCategory {
+  GENERAL
+  SC
+  ST
+  OBC
+  EWS
+  OTHER
 }
 
 enum Gender {
   MALE
   FEMALE
+  OTHER
+}
+
+model Address {
+  id Int @id @default(autoincrement())
+
+  // Core address fields (required & optional as per common Indian school needs)
+  houseNo      String? // House/Flat/Plot number
+  addressLine1 String // Main street/address (required)
+  addressLine2 String? // Additional details (colony, area, etc.)
+  landmark     String? // Nearby landmark
+  city         String
+  district     String?
+  state        String
+  pinCode      String
+  postOffice   String? // Post office name (sometimes required)
+  country      String  @default("India")
+
+  // Address purpose/type (helps distinguish current vs permanent)
+  addressType AddressType @default(CURRENT)
+
+  // Optional geolocation (future-proof, can be added via frontend map later)
+  latitude  Float?
+  longitude Float?
+
+  // Audit fields
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ─── Relations ───
+  // Current address used by admission requests
+  currentAdmissionRequests AdmissionRequest[] @relation("AdmissionCurrentAddress")
+
+  // Permanent address used by admission requests
+  permanentAdmissionRequests AdmissionRequest[] @relation("AdmissionPermanentAddress")
+
+  // Current address used by students
+  currentStudents Student[] @relation("StudentCurrentAddress")
+
+  // Permanent address used by students
+  permanentStudents Student[] @relation("StudentPermanentAddress")
+
+  // Future extensions (commented out — add when needed)
+  // staffAddresses             Staff[]              @relation("StaffAddress")
+  // schoolBranches             School[]             @relation("SchoolBranchAddress")
+
+  @@index([pinCode])
+  @@index([city, state])
+  @@index([addressType])
+}
+
+enum AddressType {
+  CURRENT
+  PERMANENT
+  CORRESPONDENCE
+  OFFICE
   OTHER
 }
 
