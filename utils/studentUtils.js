@@ -10,6 +10,7 @@ export async function getStudentSubjects(
   const ayId = academicYearId || (await getActiveAcademicYear())?.id;
   if (!ayId) throw new Error("No active academic year found");
 
+  // Fetch student's current enrollment
   const enrollment = await tx.studentStream.findFirst({
     where: {
       studentId,
@@ -17,28 +18,25 @@ export async function getStudentSubjects(
     },
     orderBy: { createdAt: "desc" },
     include: {
-      classroom: { select: { name: true } },
+      classroom: { select: { id: true, name: true } }, // ← we need classroomId
       stream: { select: { id: true } },
       academicYear: { select: { id: true, label: true } },
     },
   });
 
   if (!enrollment) {
-    console.warn(
-      `No active enrollment for student ${studentId}`,
-    );
+    console.warn(`No active enrollment for student ${studentId}`);
     return [];
   }
 
-  // Normalize class name (handles "Class 11" → "11", "class 11" → "11", etc.)
-  let className = enrollment?.classroom?.name?.trim() || "";
+  const classroomId = enrollment.classroom?.id;
 
-  className = className
-    .replace(/^Class\s+/i, "")
-    .replace(/^Std\s+/i, "")
-    .replace(/^Grade\s+/i, "")
-    .replace(/^(XI|XII)$/i, (m) => (m.toLowerCase() === "xi" ? "11" : "12"))
-    .trim();
+  if (!classroomId) {
+    console.warn(
+      `Student ${studentId} has no classroom assigned in enrollment`,
+    );
+    return [];
+  }
 
   // Get student's schoolId
   const student = await tx.student.findUnique({
@@ -48,11 +46,11 @@ export async function getStudentSubjects(
 
   if (!student) return [];
 
-  // 1. All CORE subjects (implicit – always included)
+  // 1. All CORE subjects — use classroomId instead of className
   const coreSubjects = await tx.curriculumSubject.findMany({
     where: {
       academicYearId: ayId,
-      className,
+      classroomId, // ← FIXED: this is the correct field now
       category: "CORE",
       schoolId: student.schoolId,
       OR: [{ streamId: enrollment.streamId }, { streamId: null }],
@@ -62,7 +60,7 @@ export async function getStudentSubjects(
     },
   });
 
-  // 2. Approved ELECTIVE and ACTIVITY subjects (explicit – from StudentElectiveChoice)
+  // 2. Approved ELECTIVE and ACTIVITY subjects (unchanged — no className here)
   const approvedChoices = await tx.studentElectiveChoice.findMany({
     where: {
       studentId,
@@ -106,7 +104,7 @@ export async function getStudentSubjects(
   });
 }
 
-// Optional helper: Validate if a list of curriculumSubjectIds are valid electives for the student
+// Validate electives for a student
 export async function validateElectives(
   studentId,
   curriculumSubjectIds,
@@ -117,16 +115,15 @@ export async function validateElectives(
     include: { classroom: true, stream: true },
   });
 
-  if (!enrollment) return false;
+  if (!enrollment || !enrollment.classroom?.id) return false;
 
-  const className =
-    enrollment?.classroom?.name?.trim()?.replace(/^Class\s+/i, "") || "";
+  const classroomId = enrollment.classroom.id;
 
   const validCount = await tx.curriculumSubject.count({
     where: {
       id: { in: curriculumSubjectIds },
       academicYearId: enrollment.academicYearId,
-      className,
+      classroomId, // ← FIXED
       category: { in: ["ELECTIVE", "ACTIVITY"] },
       schoolId: (await tx.student.findUnique({ where: { id: studentId } }))
         .schoolId,
@@ -137,6 +134,7 @@ export async function validateElectives(
   return validCount === curriculumSubjectIds.length;
 }
 
+// Validate electives for a specific enrollment
 export async function validateElectivesForEnrollment(
   tx,
   enrollmentId,
@@ -145,27 +143,24 @@ export async function validateElectivesForEnrollment(
   const enrollment = await tx.studentStream.findUnique({
     where: { id: enrollmentId },
     include: {
-      classroom: { select: { name: true } },
+      classroom: { select: { id: true, name: true } }, // ← need id
       stream: { select: { id: true } },
       academicYear: { select: { id: true } },
     },
   });
 
-  if (!enrollment) {
-    console.warn(
-      `No active enrollment for student ${studentId}`,
-    );
-    return [];
+  if (!enrollment || !enrollment.classroom?.id) {
+    console.warn(`No valid classroom for enrollment ${enrollmentId}`);
+    return false;
   }
 
-  const className =
-    enrollment?.classroom?.name?.trim()?.replace(/^Class\s+/i, "") || "";
+  const classroomId = enrollment.classroom.id;
 
   const validCount = await tx.curriculumSubject.count({
     where: {
       id: { in: curriculumSubjectIds },
       academicYearId: enrollment.academicYearId,
-      className,
+      classroomId, // ← FIXED
       category: { in: ["ELECTIVE", "ACTIVITY"] },
       schoolId: (
         await tx.student.findUnique({ where: { id: enrollment.studentId } })
