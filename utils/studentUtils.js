@@ -29,7 +29,8 @@ export async function getStudentSubjects(
   }
 
   // Normalize class name (handles "Class 11" → "11", "class 11" → "11", etc.)
-  let className = enrollment.classroom.name.trim();
+  let className = enrollment?.classroom?.name?.trim() || "";
+
   className = className
     .replace(/^Class\s+/i, "")
     .replace(/^Std\s+/i, "")
