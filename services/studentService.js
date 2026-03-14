@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { generateRollNo } from "../utils/rollNoGenerator.js";
 import { generateSecurePassword } from "../controllers/authController.js";
+
 export async function createStudentService(tx, inputData, createdById = null) {
   const {
     name,
@@ -25,33 +26,50 @@ export async function createStudentService(tx, inputData, createdById = null) {
     classroomId,
     streamId,
     rollNo,
-    parents = [],
+    parents,
     electiveCurriculumSubjectIds = [],
   } = inputData;
+
+  // ─────────────────────────────────────────────
+  // ⭐ HARD VALIDATION (SERVICE MUST NOT TRUST INPUT)
+  // ─────────────────────────────────────────────
+
+  const safeName = name?.trim();
+  const safeEmail = email?.trim();
+
+  if (!safeName || !safeEmail) {
+    throw new Error("Invalid student name/email");
+  }
 
   const tempPasswords = {
     student: null,
     parents: [],
   };
 
-  // 1. Create User (STUDENT)
+  // ─────────────────────────────────────────────
+  // 1️⃣ CREATE STUDENT USER
+  // ─────────────────────────────────────────────
+
   tempPasswords.student = generateSecurePassword();
   const hashedPassword = await bcrypt.hash(tempPasswords.student, 10);
 
   const user = await tx.user.create({
     data: {
-      email: email.trim(),
+      email: safeEmail,
       password: hashedPassword,
       role: "STUDENT",
       schoolId: Number(schoolId),
     },
   });
 
-  // 2. Create Student profile
+  // ─────────────────────────────────────────────
+  // 2️⃣ CREATE STUDENT PROFILE
+  // ─────────────────────────────────────────────
+
   const student = await tx.student.create({
     data: {
-      name: name.trim(),
-      email: email.trim(),
+      name: safeName,
+      email: safeEmail,
       gender,
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
       grade,
@@ -73,9 +91,13 @@ export async function createStudentService(tx, inputData, createdById = null) {
 
   let enrollment = null;
 
-  // 3. Enroll in classroom/stream if provided (only after student is created)
+  // ─────────────────────────────────────────────
+  // 3️⃣ CREATE ENROLLMENT (CLASS + STREAM)
+  // ─────────────────────────────────────────────
+
   if (classroomId) {
     let ayId = academicYearId;
+
     if (!ayId) {
       const active = await getActiveAcademicYear(Number(schoolId));
       if (!active) throw new Error("No active academic year found");
@@ -101,87 +123,107 @@ export async function createStudentService(tx, inputData, createdById = null) {
       },
     });
 
-    // Update student's direct classroom reference
     await tx.student.update({
       where: { id: student.id },
       data: { classroomId: Number(classroomId) },
     });
   }
 
-  // 4. Create/link parents
+  // ─────────────────────────────────────────────
+  // 4️⃣ CREATE / LINK PARENTS (SAFE LOOP)
+  // ─────────────────────────────────────────────
+
   const createdParents = [];
-  for (const p of parents) {
-    let parentUser = await tx.user.findUnique({
-      where: { email: p.email.trim() },
-    });
 
-    let parent;
-    let parentTempPassword = null;
+  if (Array.isArray(parents) && parents.length > 0) {
+    for (const rawParent of parents) {
+      if (!rawParent) continue;
 
-    if (parentUser) {
-      parent = await tx.parent.findFirst({ where: { userId: parentUser.id } });
-      if (!parent) {
+      const parentEmail = rawParent.email?.trim();
+      const parentName = rawParent.name?.trim();
+
+      if (!parentEmail || !parentName) {
+        console.warn("Skipping invalid parent record:", rawParent);
+        continue;
+      }
+
+      let parentUser = await tx.user.findUnique({
+        where: { email: parentEmail },
+      });
+
+      let parent;
+      let parentTempPassword = null;
+
+      if (parentUser) {
+        parent = await tx.parent.findFirst({
+          where: { userId: parentUser.id },
+        });
+
+        if (!parent) {
+          parent = await tx.parent.create({
+            data: {
+              type: rawParent.type,
+              name: parentName,
+              email: parentEmail,
+              phone: rawParent.phone,
+              address: rawParent.address,
+              userId: parentUser.id,
+            },
+          });
+        }
+      } else {
+        parentTempPassword = generateSecurePassword();
+        const parentHash = await bcrypt.hash(parentTempPassword, 10);
+
+        parentUser = await tx.user.create({
+          data: {
+            email: parentEmail,
+            password: parentHash,
+            role: "PARENT",
+            schoolId: Number(schoolId),
+          },
+        });
+
         parent = await tx.parent.create({
           data: {
-            type: p.type,
-            name: p.name.trim(),
-            email: p.email.trim(),
-            phone: p.phone,
-            address: p.address,
+            type: rawParent.type,
+            name: parentName,
+            email: parentEmail,
+            phone: rawParent.phone,
+            address: rawParent.address,
             userId: parentUser.id,
           },
         });
+
+        createdParents.push({
+          name: parentName,
+          email: parentEmail,
+          temporaryPassword: parentTempPassword,
+        });
       }
-    } else {
-      parentTempPassword = generateSecurePassword();
-      const parentHash = await bcrypt.hash(parentTempPassword, 10);
 
-      parentUser = await tx.user.create({
-        data: {
-          email: p.email.trim(),
-          password: parentHash,
-          role: "PARENT",
-          schoolId: Number(schoolId),
+      await tx.studentParent.upsert({
+        where: {
+          studentId_parentId: {
+            studentId: student.id,
+            parentId: parent.id,
+          },
         },
-      });
-
-      parent = await tx.parent.create({
-        data: {
-          type: p.type,
-          name: p.name.trim(),
-          email: p.email.trim(),
-          phone: p.phone,
-          address: p.address,
-          userId: parentUser.id,
-        },
-      });
-
-      createdParents.push({
-        name: p.name.trim(),
-        email: p.email.trim(),
-        temporaryPassword: parentTempPassword,
-      });
-    }
-
-    await tx.studentParent.upsert({
-      where: {
-        studentId_parentId: {
+        update: { isPrimary: rawParent.isPrimary || false },
+        create: {
           studentId: student.id,
           parentId: parent.id,
+          isPrimary: rawParent.isPrimary || false,
         },
-      },
-      update: { isPrimary: p.isPrimary || false },
-      create: {
-        studentId: student.id,
-        parentId: parent.id,
-        isPrimary: p.isPrimary || false,
-      },
-    });
+      });
+    }
   }
 
-  // 5. Assign electives ONLY if enrollment exists
+  // ─────────────────────────────────────────────
+  // 5️⃣ ELECTIVE SUBJECT ASSIGNMENT
+  // ─────────────────────────────────────────────
+
   if (electiveCurriculumSubjectIds.length > 0 && enrollment) {
-    // Validate only after enrollment is created
     const isValid = await validateElectivesForEnrollment(
       tx,
       enrollment.id,
@@ -203,7 +245,10 @@ export async function createStudentService(tx, inputData, createdById = null) {
     });
   }
 
-  // Return
+  // ─────────────────────────────────────────────
+  // RETURN RESPONSE
+  // ─────────────────────────────────────────────
+
   return {
     student,
     user,
