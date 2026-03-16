@@ -186,6 +186,64 @@ export const getClassesDropdown = async (req, res) => {
   }
 };
 
+// Public: Get classes dropdown (no auth required)
+export const getClassesDropdownPublic = async (req, res) => {
+  const { search, limit = 100, schoolId } = req.query;
+
+  try {
+    // schoolId is now REQUIRED in query (public callers must provide it)
+    if (!schoolId) {
+      return sendError(res, 400, "schoolId is required", "VALIDATION_ERROR");
+    }
+
+    const parsedSchoolId = Number(schoolId);
+    if (isNaN(parsedSchoolId) || parsedSchoolId <= 0) {
+      return sendError(res, 400, "Invalid schoolId", "VALIDATION_ERROR");
+    }
+
+    const where = {
+      schoolId: parsedSchoolId,
+      // Optional: only show active classrooms if you have such a field
+      // isActive: true,
+    };
+
+    // Optional search: name or section
+    if (search?.trim()) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { name: { contains: searchTerm, mode: "insensitive" } },
+        { section: { contains: searchTerm, mode: "insensitive" } },
+      ];
+    }
+
+    const classrooms = await prisma.classroom.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        section: true,
+      },
+      orderBy: [{ name: "asc" }, { section: "asc" }],
+      take: Math.min(Number(limit), 200), // hard cap for safety
+    });
+
+    // Format for dropdown
+    const formatted = classrooms.map((cls) => ({
+      id: cls.id,
+      name: cls.name,
+      section: cls.section || null,
+      displayName: cls.section ? `${cls.name} - ${cls.section}` : cls.name,
+    }));
+
+    return sendSuccess(res, 200, formatted, "Classes fetched for dropdown", {
+      total: formatted.length,
+    });
+  } catch (err) {
+    console.error("Public get classes dropdown error:", err);
+    return sendError(res, 500, "Failed to fetch classes", "INTERNAL_ERROR");
+  }
+};
+
 // UPDATE CLASSROOM
 export const updateClassroom = async (req, res) => {
   const { id } = req.params;
