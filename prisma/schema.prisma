@@ -1110,13 +1110,14 @@ model AdmissionDocument {
   id Int @id @default(autoincrement())
 
   // Document metadata
-  documentType  AdmissionDocumentType // e.g., MARKSHEET, PHOTO, RECEIPT, FORM, AADHAAR, etc.
-  title         String? // e.g., "Class 10 Marksheet", "Admission Receipt"
-  fileUrl       String // S3 / Cloudinary / local URL
-  fileName      String
-  mimeType      String? // e.g., image/jpeg, application/pdf
-  fileSizeBytes Int?
-  uploadedAt    DateTime              @default(now())
+  documentType       AdmissionDocumentType // e.g., MARKSHEET, PHOTO, RECEIPT, FORM, AADHAAR, etc.
+  title              String? // e.g., "Class 10 Marksheet", "Admission Receipt"
+  fileUrl            String // S3 / Cloudinary / local URL
+  fileName           String
+  mimeType           String? // e.g., image/jpeg, application/pdf
+  fileSizeBytes      Int?
+  uploadedAt         DateTime              @default(now())
+  pocketbaseRecordId String?
 
   // Who uploaded (optional audit)
   uploadedById Int?
@@ -1125,6 +1126,9 @@ model AdmissionDocument {
   // Link to admission request
   admissionRequestId Int
   admissionRequest   AdmissionRequest @relation(fields: [admissionRequestId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([admissionRequestId])
   @@index([documentType])

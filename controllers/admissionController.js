@@ -2,7 +2,7 @@ import prisma from "../models/prisma.js";
 import { createStudentService } from "../services/studentService.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
 import z from "zod";
-
+import pb from "../utils/pocketbase.js";
 // ────────────────────────────────────────────────
 // Zod Schemas (complete & strict)
 // ────────────────────────────────────────────────
@@ -112,28 +112,47 @@ const admissionSchema = z
   });
 
 // 1. Submit admission form (public/student)
+// controllers/admissionController.js → createAdmission (public endpoint)
+
 export const createAdmission = async (req, res) => {
   try {
-    const data = admissionSchema.parse(req.body);
+    console.log("📥 Admission request received");
 
-    // let academicYearId = data.academicYearId || null;
+    // Normalize multipart body (JSON strings → objects)
+    const normalizedBody = {
+      ...req.body,
+      schoolId: req.body.schoolId ? Number(req.body.schoolId) : undefined,
+      requestedClassroomId: req.body.requestedClassroomId
+        ? Number(req.body.requestedClassroomId)
+        : undefined,
+      requestedStreamId: req.body.requestedStreamId
+        ? Number(req.body.requestedStreamId)
+        : undefined,
+      totalAdmissionAmount: req.body.totalAdmissionAmount
+        ? Number(req.body.totalAdmissionAmount)
+        : undefined,
+      monthlyFees: req.body.monthlyFees
+        ? Number(req.body.monthlyFees)
+        : undefined,
 
-    // if (academicYearId) {
-    //   const year = await prisma.academicYear.findUnique({
-    //     where: { id: academicYearId },
-    //     select: { id: true },
-    //   });
-    //   if (!year) {
-    //     return sendError(
-    //       res,
-    //       400,
-    //       "Invalid academic year ID provided",
-    //       "INVALID_REFERENCE",
-    //     );
-    //   }
-    // }
+      currentAddress: req.body.currentAddress
+        ? JSON.parse(req.body.currentAddress)
+        : undefined,
+      permanentAddress: req.body.permanentAddress
+        ? JSON.parse(req.body.permanentAddress)
+        : undefined,
+      parents: req.body.parents ? JSON.parse(req.body.parents) : undefined,
+      electiveSubjects: req.body.electiveSubjects
+        ? JSON.parse(req.body.electiveSubjects)
+        : undefined,
+    };
 
-    // Prevent duplicate application by email (no year dependency)
+    const data = admissionSchema.parse(normalizedBody);
+    const files = req.files || [];
+
+    console.log("📂 Files received:", files.length);
+
+    // Duplicate check
     const existing = await prisma.admissionRequest.findFirst({
       where: {
         email: data.email,
@@ -144,106 +163,162 @@ export const createAdmission = async (req, res) => {
         },
       },
     });
+
     if (existing) {
+      console.log("⚠️ Duplicate found:", existing.id);
       return sendError(
         res,
         409,
-        "An admission request already exists for this email",
+        "Admission already exists",
         "DUPLICATE_APPLICATION",
       );
     }
 
-    // Create addresses
-    let currentAddressId = null;
-    let permanentAddressId = null;
+    const admission = await prisma.$transaction(async (tx) => {
+      console.log("🔄 Transaction started");
 
-    if (data.currentAddress) {
-      const addr = await prisma.address.create({
-        data: { ...data.currentAddress, addressType: "CURRENT" },
+      // Addresses
+      let currentAddressId = null;
+      let permanentAddressId = null;
+
+      if (data.currentAddress) {
+        const addr = await tx.address.create({
+          data: { ...data.currentAddress, addressType: "CURRENT" },
+        });
+        currentAddressId = addr.id;
+        console.log("🏠 Current address:", addr.id);
+      }
+
+      if (data.permanentAddress) {
+        const addr = await tx.address.create({
+          data: { ...data.permanentAddress, addressType: "PERMANENT" },
+        });
+        permanentAddressId = addr.id;
+        console.log("🏠 Permanent address:", addr.id);
+      }
+
+      // Create admission
+      const createdAdmission = await tx.admissionRequest.create({
+        data: {
+          applicationNo: data.applicationNo || null,
+          name: data.name,
+          email: data.email,
+          gender: data.gender,
+          dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+          aadhaarNumber: data.aadhaarNumber,
+          permanentEducationNumber: data.permanentEducationNumber,
+          currentAddressId,
+          permanentAddressId,
+          category: data.category,
+          isStaffWard: data.isStaffWard,
+          hasSiblingInSchool: data.hasSiblingInSchool,
+          previousSchoolName: data.previousSchoolName,
+          previousSchoolAddress: data.previousSchoolAddress,
+          previousClass: data.previousClass,
+          previousGrade: data.previousGrade,
+          totalSubjectsInPrevClass: data.totalSubjectsInPrevClass,
+          totalMarksObtainedInPrevClass: data.totalMarksObtainedInPrevClass,
+          fullMarksInPrevClass: data.fullMarksInPrevClass,
+          admissionForClass: data.admissionForClass,
+          requestedClassroomId: data.requestedClassroomId,
+          requestedStreamId: data.requestedStreamId,
+          parents: data.parents || null,
+          electiveSubjects: data.electiveSubjects || null,
+          totalAdmissionAmount: data.totalAdmissionAmount,
+          monthlyFees: data.monthlyFees,
+          admissionReceiptNo: data.admissionReceiptNo,
+          admissionReceiptLink: data.admissionReceiptLink,
+          schoolId: data.schoolId,
+          createdById: null, // public
+          isReAdmission: data.isReAdmission,
+        },
+        include: {
+          currentAddress: true,
+          permanentAddress: true,
+          school: { select: { name: true } },
+        },
       });
-      currentAddressId = addr.id;
-    }
 
-    if (data.permanentAddress) {
-      const addr = await prisma.address.create({
-        data: { ...data.permanentAddress, addressType: "PERMANENT" },
-      });
-      permanentAddressId = addr.id;
-    }
+      console.log("🎓 Admission created:", createdAdmission.id);
 
-    // Create admission request
-    const admission = await prisma.admissionRequest.create({
-      data: {
-        applicationNo: data.applicationNo || null,
-        name: data.name,
-        email: data.email,
-        gender: data.gender,
-        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
-        aadhaarNumber: data.aadhaarNumber,
-        permanentEducationNumber: data.permanentEducationNumber,
-        currentAddressId,
-        permanentAddressId,
-        category: data.category,
-        isStaffWard: data.isStaffWard,
-        hasSiblingInSchool: data.hasSiblingInSchool,
-        previousSchoolName: data.previousSchoolName,
-        previousSchoolAddress: data.previousSchoolAddress,
-        previousClass: data.previousClass,
-        previousGrade: data.previousGrade,
-        totalSubjectsInPrevClass: data.totalSubjectsInPrevClass,
-        totalMarksObtainedInPrevClass: data.totalMarksObtainedInPrevClass,
-        fullMarksInPrevClass: data.fullMarksInPrevClass,
-        admissionForClass: data.admissionForClass,
-        requestedClassroomId: data.requestedClassroomId,
-        requestedStreamId: data.requestedStreamId,
-        parents: data.parents || null,
-        electiveSubjects: data.electiveSubjects || null,
-        totalAdmissionAmount: data.totalAdmissionAmount,
-        monthlyFees: data.monthlyFees,
-        admissionReceiptNo: data.admissionReceiptNo,
-        admissionReceiptLink: data.admissionReceiptLink,
-        schoolId: data.schoolId,
-        createdById: req.user?.id || null,
-        isReAdmission: data.isReAdmission,
-      },
-      include: {
-        currentAddress: true,
-        permanentAddress: true,
-        school: { select: { name: true } },
-      },
+      // Upload files to PocketBase (public create - no admin auth!)
+      if (files.length > 0) {
+        console.log("⬆️ Uploading files (public mode)...");
+
+        const docs = [];
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log(`  → ${file.originalname}`);
+
+          const formData = new FormData();
+
+          // Correct way: use buffer + filename + type
+          const fileBlob = new Blob([file.buffer], { type: file.mimetype });
+          formData.append("file", fileBlob, file.originalname);
+
+          // Per-file metadata (from multipart body)
+          const docType =
+            req.body[`documents[${i}][documentType]`] || "OTHER_DOCUMENT";
+          const title = req.body[`documents[${i}][title]`] || file.originalname;
+
+          formData.append("document_type", docType);
+          formData.append("title", title);
+          formData.append(
+            "admission_request_id",
+            createdAdmission.id.toString(),
+          );
+
+          // Public create – no auth header
+          const pbRecord = await pb
+            .collection("admission_documents")
+            .create(formData);
+
+          console.log(`  ✓ Uploaded: ${pbRecord.id}`);
+
+          docs.push({
+            admissionRequestId: createdAdmission.id,
+            documentType: docType,
+            title,
+            fileUrl: `${process.env.POCKETBASE_URL}/api/files/admission_documents/${pbRecord.id}/${pbRecord.file}`,
+            pocketbaseRecordId: pbRecord.id,
+            fileName: file.originalname,
+            mimeType: file.mimetype,
+            fileSizeBytes: file.size,
+            uploadedById: null,
+            pocketbaseRecordId: pbRecord.id,
+          });
+        }
+
+        console.log(`💾 Saving ${docs.length} document records...`);
+        await tx.admissionDocument.createMany({ data: docs });
+        console.log("✅ Documents saved");
+      } else {
+        console.log("ℹ️ No files");
+      }
+
+      return createdAdmission;
     });
 
-    // Handle documents
-    if (data.documents?.length > 0) {
-      await prisma.admissionDocument.createMany({
-        data: data.documents.map((doc) => ({
-          ...doc,
-          admissionRequestId: admission.id,
-          uploadedById: req.user?.id || null,
-        })),
-      });
-    }
+    console.log("🎉 Admission completed:", admission.id);
 
-    return sendSuccess(
-      res,
-      201,
-      admission,
-      "Admission request submitted successfully",
-    );
+    return sendSuccess(res, 201, admission, "Admission submitted successfully");
   } catch (err) {
+    console.error("❌ Admission failed:", err);
+
     if (err instanceof z.ZodError) {
       return sendError(
         res,
         400,
-        err.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join(", "),
+        err.issues.map((e) => e.message).join(", "),
         "VALIDATION_ERROR",
       );
     }
-    console.error("Admission creation failed:", err);
+
     return sendError(
       res,
       500,
-      "Failed to submit admission request",
+      "Failed to submit admission",
       err.message || "Internal error",
     );
   }
@@ -295,7 +370,6 @@ export const getAdmissions = async (req, res) => {
         orderBy: { appliedAt: "desc" },
         include: {
           school: { select: { name: true } },
-          // Removed academicYear include (use sessionYear instead)
           currentAddress: true,
           permanentAddress: true,
           documents: true,
@@ -355,7 +429,7 @@ export const getAdmission = async (req, res) => {
     return sendSuccess(res, 200, admission, "Admission details fetched");
   } catch (err) {
     console.error("Get admission error:", err);
-    return sendError(res, 500, "Failed to fetch admission");
+    return sendError(res, 500, "Failed to fetch admission", err.message);
   }
 };
 

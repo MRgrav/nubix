@@ -1,3 +1,4 @@
+// routes\admissionRoutes.js
 import express from "express";
 import {
   createAdmission,
@@ -8,10 +9,11 @@ import {
   rejectAdmission,
 } from "../controllers/admissionController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
+import { uploadAdmissionDocs } from "../middlewares/upload.js";
 
 const router = express.Router();
 
-router.post("/", createAdmission);
+router.post("/public/", uploadAdmissionDocs, createAdmission);
 router.get("/", authenticate, authorize("ADMIN"), getAdmissions);
 router.get("/:id", authenticate, authorize("ADMIN"), getAdmission);
 router.put("/:id", authenticate, authorize("ADMIN"), updateAdmission);

@@ -61,6 +61,34 @@ export const getOnlyStreams = async (req, res) => {
   }
 };
 
+// Public: Get all streams (no auth required)
+export const getOnlyStreamsPublic = async (req, res) => {
+  try {
+    const streams = await prisma.stream.findMany({
+      select: {
+        id: true,
+        name: true,
+      },
+      where: {},
+      orderBy: {
+        name: "asc",
+      },
+    });
+
+    const formatted = streams.map((stream) => ({
+      id: stream.id,
+      name: stream.name,
+    }));
+
+    return sendSuccess(res, 200, formatted, "Streams fetched successfully", {
+      total: formatted.length,
+    });
+  } catch (err) {
+    console.error("Public get streams error:", err);
+    return sendError(res, 500, "Failed to fetch streams", "INTERNAL_ERROR");
+  }
+};
+
 export const getStreams = async (req, res) => {
   const { page = 1, limit = 60 } = req.query;
   try {
