@@ -281,20 +281,14 @@ export const updateExamConfig = async (req, res) => {
     const newBoardId = data.boardId ?? existing.boardId;
     const newYearId = data.academicYearId ?? existing.academicYearId;
     const newSubjectId = data.subjectId ?? existing.subjectId;
-    const newTermName = data.termName?.trim() ?? existing.termName;
 
-    if (
-      data.boardId ||
-      data.academicYearId ||
-      data.subjectId ||
-      data.termName
-    ) {
+    if (data.boardId || data.academicYearId || data.subjectId) {
       const duplicate = await prisma.examConfig.findFirst({
         where: {
           boardId: newBoardId,
           academicYearId: newYearId,
           subjectId: newSubjectId || null,
-          termName: newTermName,
+          name: data.name?.trim() ?? existing.name,
           id: { not: Number(id) },
         },
       });
@@ -338,7 +332,7 @@ export const updateExamConfig = async (req, res) => {
       where: { id: Number(id) },
       data: {
         ...data,
-        termName: data.termName ? data.termName.trim() : undefined,
+        name: data.name ? data.name.trim() : undefined,
         updatedById: req.user.id,
       },
       include: {

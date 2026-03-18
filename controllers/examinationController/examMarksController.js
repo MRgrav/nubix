@@ -10,7 +10,7 @@ const markEntrySchema = z.object({
   theoryMarks: z.number().int().nonnegative().optional(),
   practicalMarks: z.number().int().nonnegative().optional(),
   internalMarks: z.number().int().nonnegative().optional(),
-  marksObtained: z.number().int().nonnegative().optional(), // fallback/total
+  marksObtained: z.number().int().nonnegative().optional(),
   remarks: z.string().optional().nullable(),
 });
 
@@ -23,10 +23,9 @@ export const enterExamMarks = async (req, res) => {
   const { marks } = req.body;
 
   try {
-    // Validate input structure
     const validated = bulkMarksSchema.parse({ marks });
 
-    // Fetch exam + config + classroom + subject
+    // Fetch exam details
     const exam = await prisma.exam.findUnique({
       where: { id: examId },
       include: {
@@ -39,11 +38,21 @@ export const enterExamMarks = async (req, res) => {
 
     if (!exam) return sendError(res, 404, "Exam not found", "NOT_FOUND");
 
-    // Teacher assignment check
+    // === VALIDATION: Only allow marks after exam is COMPLETED ===
+    if (exam.status !== "COMPLETED") {
+      return sendError(
+        res,
+        400,
+        `Cannot enter marks. Current status is ${exam.status}. Marks can only be entered when status is COMPLETED.`,
+        "INVALID_EXAM_STATUS",
+      );
+    }
+
+    // Teacher authorization check
     if (req.user.role === "STAFF") {
       const assignment = await prisma.teacherAssignment.findFirst({
         where: {
-          teacherId: req.user.staff?.id,
+          teacherId: req.user.staffId || req.user.staff?.id, // safer fallback
           subjectId: exam.subjectId,
           classroomId: exam.classroomId,
           academicYearId: exam.term.academicYearId,
@@ -62,7 +71,6 @@ export const enterExamMarks = async (req, res) => {
     }
 
     const config = exam.config;
-
     if (!config) {
       return sendError(
         res,
@@ -72,64 +80,57 @@ export const enterExamMarks = async (req, res) => {
       );
     }
 
-    // ─── Batch validate all students have this subject (core or elective) ───
     const studentIds = validated.marks.map((m) => m.studentId);
 
-    // Fixed: use prisma.join instead of Prisma.join
-    const enrolledStudents = await prisma.$queryRaw`
-      SELECT DISTINCT s.id
-      FROM "Student" s
-      WHERE s.id IN (${Prisma.join(studentIds)})
-        AND (
-          -- Core/common subjects
-          EXISTS (
-            SELECT 1 FROM "CurriculumSubject" cs
-            WHERE cs."subjectId" = ${exam.subjectId}
-              AND cs."className" = ${exam.classroom.name.replace(/\D/g, "").trim()}
-              AND cs."academicYearId" = ${exam.term.academicYearId}
-              AND cs."streamId" IS NULL
-          )
-          OR
-          -- Stream-specific subjects
-          EXISTS (
-            SELECT 1 FROM "CurriculumSubject" cs
-            JOIN "StudentStream" ss ON ss."streamId" = cs."streamId"
-            WHERE cs."subjectId" = ${exam.subjectId}
-              AND cs."className" = ${exam.classroom.name.replace(/\D/g, "").trim()}
-              AND cs."academicYearId" = ${exam.term.academicYearId}
-              AND ss."studentId" = s.id
-              AND ss."academicYearId" = ${exam.term.academicYearId}
-          )
-          OR
-          -- Elective subjects chosen & approved
-          EXISTS (
-            SELECT 1 FROM "StudentElectiveChoice" sec
-            WHERE sec."studentId" = s.id
-              AND sec."curriculumSubjectId" IN (
-                SELECT id FROM "CurriculumSubject"
-                WHERE "subjectId" = ${exam.subjectId}
-                  AND "academicYearId" = ${exam.term.academicYearId}
-              )
-              AND sec.status = 'APPROVED'
-          )
-        )
-    `;
+    // === IMPROVED: Simplified & Correct Enrollment Check using classroomId ===
+    const enrolledStudents = await prisma.student.findMany({
+      where: {
+        id: { in: studentIds },
+        OR: [
+          // Students enrolled in this classroom + subject via CurriculumSubject
+          {
+            classroomId: exam.classroomId,
+            studentStreams: {
+              some: {
+                academicYearId: exam.term.academicYearId,
+                OR: [
+                  { streamId: null },
+                  { streamId: exam.streamId || undefined },
+                ],
+              },
+            },
+          },
+          // Elective subject approved
+          {
+            studentElectiveChoices: {
+              some: {
+                curriculumSubject: {
+                  subjectId: exam.subjectId,
+                  academicYearId: exam.term.academicYearId,
+                },
+                status: "APPROVED",
+              },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
 
-    const validStudentIds = new Set(enrolledStudents.map((s) => Number(s.id)));
+    const validStudentIds = new Set(enrolledStudents.map((s) => s.id));
 
-    // ─── Process each mark entry ───
+    // Process marks in transaction
     const results = await prisma.$transaction(async (tx) => {
       const processed = [];
 
       for (const m of validated.marks) {
         const studentId = m.studentId;
 
-        // 1. Student must be enrolled in the subject
         if (!validStudentIds.has(studentId)) {
           processed.push({
             studentId,
             status: "FAILED",
-            error: "Student is not enrolled in this subject (core/elective)",
+            error: "Student not enrolled in this subject",
           });
           continue;
         }
@@ -137,35 +138,30 @@ export const enterExamMarks = async (req, res) => {
         let totalObtained = 0;
         let passStatus = "PASS";
 
-        // 2. Theory validation
-        if (config.theoryMaxMarks) {
+        // Theory
+        if (config.theoryMaxMarks != null) {
           const theory = Number(m.theoryMarks ?? 0);
-          if (isNaN(theory) || theory < 0 || theory > config.theoryMaxMarks) {
+          if (theory > config.theoryMaxMarks) {
             processed.push({
               studentId,
               status: "FAILED",
-              error: `Theory marks must be 0–${config.theoryMaxMarks}`,
+              error: `Theory marks exceed max (${config.theoryMaxMarks})`,
             });
             continue;
           }
           totalObtained += theory;
-          if (config.theoryPassMarks && theory < config.theoryPassMarks) {
+          if (config.theoryPassMarks && theory < config.theoryPassMarks)
             passStatus = "FAIL (Theory)";
-          }
         }
 
-        // 3. Practical validation
-        if (config.practicalMaxMarks) {
+        // Practical
+        if (config.practicalMaxMarks != null) {
           const practical = Number(m.practicalMarks ?? 0);
-          if (
-            isNaN(practical) ||
-            practical < 0 ||
-            practical > config.practicalMaxMarks
-          ) {
+          if (practical > config.practicalMaxMarks) {
             processed.push({
               studentId,
               status: "FAILED",
-              error: `Practical marks must be 0–${config.practicalMaxMarks}`,
+              error: `Practical marks exceed max (${config.practicalMaxMarks})`,
             });
             continue;
           }
@@ -173,55 +169,45 @@ export const enterExamMarks = async (req, res) => {
           if (
             config.practicalPassMarks &&
             practical < config.practicalPassMarks
-          ) {
+          )
             passStatus = "FAIL (Practical)";
-          }
         }
 
-        // 4. Internal validation
-        if (config.internalMaxMarks) {
+        // Internal
+        if (config.internalMaxMarks != null) {
           const internal = Number(m.internalMarks ?? 0);
-          if (
-            isNaN(internal) ||
-            internal < 0 ||
-            internal > config.internalMaxMarks
-          ) {
+          if (internal > config.internalMaxMarks) {
             processed.push({
               studentId,
               status: "FAILED",
-              error: `Internal marks must be 0–${config.internalMaxMarks}`,
+              error: `Internal marks exceed max (${config.internalMaxMarks})`,
             });
             continue;
           }
           totalObtained += internal;
-          if (config.internalPassMarks && internal < config.internalPassMarks) {
+          if (config.internalPassMarks && internal < config.internalPassMarks)
             passStatus = "FAIL (Internal)";
-          }
         }
 
-        // 5. Fallback to total if no split config
+        // Fallback total marks
         if (
           !config.theoryMaxMarks &&
           !config.practicalMaxMarks &&
           !config.internalMaxMarks
         ) {
           const obtained = Number(m.marksObtained ?? totalObtained);
-          if (
-            isNaN(obtained) ||
-            obtained < 0 ||
-            obtained > (exam.maxMarks || 100)
-          ) {
+          if (obtained > (exam.maxMarks || 100)) {
             processed.push({
               studentId,
               status: "FAILED",
-              error: `Marks must be 0–${exam.maxMarks || 100}`,
+              error: `Marks exceed max (${exam.maxMarks || 100})`,
             });
             continue;
           }
           totalObtained = obtained;
         }
 
-        // 6. Upsert marks record
+        // Upsert
         const record = await tx.examMarks.upsert({
           where: { examId_studentId: { examId, studentId } },
           update: {
@@ -230,13 +216,13 @@ export const enterExamMarks = async (req, res) => {
             practicalMarks: m.practicalMarks ?? null,
             internalMarks: m.internalMarks ?? null,
             theoryPass: config.theoryPassMarks
-              ? m.theoryMarks >= config.theoryPassMarks
+              ? (m.theoryMarks ?? 0) >= config.theoryPassMarks
               : null,
             practicalPass: config.practicalPassMarks
-              ? m.practicalMarks >= config.practicalPassMarks
+              ? (m.practicalMarks ?? 0) >= config.practicalPassMarks
               : null,
             internalPass: config.internalPassMarks
-              ? m.internalMarks >= config.internalPassMarks
+              ? (m.internalMarks ?? 0) >= config.internalPassMarks
               : null,
             overallPass: passStatus === "PASS",
             remarks: `${m.remarks || ""} - ${passStatus}`.trim(),
@@ -250,13 +236,13 @@ export const enterExamMarks = async (req, res) => {
             practicalMarks: m.practicalMarks ?? null,
             internalMarks: m.internalMarks ?? null,
             theoryPass: config.theoryPassMarks
-              ? m.theoryMarks >= config.theoryPassMarks
+              ? (m.theoryMarks ?? 0) >= config.theoryPassMarks
               : null,
             practicalPass: config.practicalPassMarks
-              ? m.practicalMarks >= config.practicalPassMarks
+              ? (m.practicalMarks ?? 0) >= config.practicalPassMarks
               : null,
             internalPass: config.internalPassMarks
-              ? m.internalMarks >= config.internalPassMarks
+              ? (m.internalMarks ?? 0) >= config.internalPassMarks
               : null,
             overallPass: passStatus === "PASS",
             remarks: `${m.remarks || ""} - ${passStatus}`.trim(),
@@ -265,11 +251,7 @@ export const enterExamMarks = async (req, res) => {
           },
         });
 
-        processed.push({
-          studentId,
-          status: "SUCCESS",
-          recordId: record.id,
-        });
+        processed.push({ studentId, status: "SUCCESS", recordId: record.id });
       }
 
       return processed;
@@ -285,6 +267,14 @@ export const enterExamMarks = async (req, res) => {
     });
   } catch (err) {
     console.error("Enter marks error:", err);
+    if (err instanceof z.ZodError) {
+      return sendError(
+        res,
+        400,
+        err.issues.map((e) => e.message).join(", "),
+        "VALIDATION_ERROR",
+      );
+    }
     return sendError(res, 500, "Failed to enter marks", err.message);
   }
 };

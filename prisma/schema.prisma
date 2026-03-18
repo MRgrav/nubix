@@ -722,7 +722,7 @@ model CurriculumSubject {
 
   studentElectiveChoices StudentElectiveChoice[]
 
-  @@unique([academicYearId, classroomId, streamId, subjectId]) // ← updated unique constraint
+  @@unique([academicYearId, classroomId, streamId, subjectId])
   @@index([academicYearId])
   @@index([classroomId])
   @@index([streamId])
