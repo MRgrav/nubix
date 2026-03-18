@@ -111,23 +111,6 @@ export const createSlot = async (req, res) => {
       }
     }
 
-    if (streamId && classroomId) {
-      // Optional: ensure classroom allows this stream
-      const classroom = await prisma.classroom.findUnique({
-        where: { id: classroomId },
-        select: { allowedStreams: true },
-      });
-      if (
-        classroom.allowedStreams &&
-        !classroom.allowedStreams.includes(streamId)
-      ) {
-        return sendError(
-          res,
-          400,
-          "This stream is not allowed in this classroom",
-        );
-      }
-    }
 
     const slot = await prisma.timetableSlot.create({
       data: {
@@ -204,7 +187,7 @@ export const getSlots = async (req, res) => {
     day,
     academicYearId,
     page = 1,
-    perPage = 60,
+    perPage = 100,
   } = req.query;
   try {
     let resolvedAcademicYearId = academicYearId;
@@ -272,6 +255,8 @@ export const getSlots = async (req, res) => {
         },
       },
       orderBy: { startMinutes: "asc" },
+      skip,
+      take: limit,
     });
 
     const totalPages = Math.ceil(total / limit);

@@ -244,7 +244,7 @@ export const createCurriculumSubject = async (req, res) => {
 export const getCurriculumSubjects = async (req, res) => {
   const {
     academicYearId,
-    classroomId, // ← primary filter instead of className
+    classroomId,
     streamId,
     category,
     subjectId,

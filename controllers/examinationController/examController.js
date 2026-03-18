@@ -3,12 +3,12 @@ import prisma from "./../../models/prisma.js";
 import { sendError, sendSuccess } from "./../../utils/responseStructure.js";
 import z from "zod";
 
-// Base schema (shared, no refinement)
+// Base schema
 const examBaseSchema = z.object({
   termId: z.number().int().positive("Term ID required"),
   classroomId: z.number().int().positive("Classroom ID required"),
   subjectId: z.number().int().positive("Subject ID required"),
-  streamId: z.number().int().positive().optional(),
+  streamId: z.number().int().positive().optional().nullable(),
   configId: z.number().int().positive("Config ID required"),
   examDate: z
     .string()
@@ -34,14 +34,10 @@ const examBaseSchema = z.object({
     .optional(),
 });
 
-// Create schema — strict refinement
+// Create schema
 const createExamSchema = examBaseSchema.refine(
-  (data) => {
-    if (data.startTime || data.endTime) {
-      return data.startTime && data.endTime;
-    }
-    return true;
-  },
+  (data) =>
+    !(data.startTime && !data.endTime) && !(data.endTime && !data.startTime),
   {
     message: "Both startTime and endTime must be provided together or neither",
     path: ["startTime"],
@@ -101,46 +97,36 @@ export const createExam = async (req, res) => {
     });
     if (!subject) return sendError(res, 404, "Subject not found", "NOT_FOUND");
 
-    // ─── 4. Validate curriculum match (class + subject + stream) ───
-    const normalizedClassName = classroom.name.replace(/\D/g, "").trim();
-    const streamIdToCheck = data.streamId || null;
+    // == Class 1-10 cannot have stream ===
+    const className = classroom.name.trim().toLowerCase();
+    const isHigherClass = ["11", "12", "class 11", "class 12"].some((c) =>
+      className.includes(c),
+    );
 
-    const curriculumWhere = {
-      subjectId: data.subjectId,
-      className: normalizedClassName,
-      academicYearId: term.academicYearId,
-    };
-
-    if (streamIdToCheck) {
-      curriculumWhere.OR = [{ streamId: streamIdToCheck }, { streamId: null }];
-    } else {
-      curriculumWhere.streamId = null;
+    if (!isHigherClass && data.streamId) {
+      return sendError(
+        res,
+        400,
+        "Stream can only be assigned for Class 11 and 12",
+        "STREAM_NOT_ALLOWED",
+      );
     }
-
+    // ─── 4. Validate curriculum match (class + subject + stream) ───
     const curriculumEntry = await prisma.curriculumSubject.findFirst({
-      where: curriculumWhere,
+      where: {
+        subjectId: data.subjectId,
+        classroomId: data.classroomId,
+        academicYearId: term.academicYearId,
+        OR: [{ streamId: data.streamId || null }, { streamId: null }],
+      },
     });
 
     if (!curriculumEntry) {
       return sendError(
         res,
         400,
-        `Subject "${subject.name}" is not assigned to class "${classroom.name}"${
-          streamIdToCheck ? ` (stream ${streamIdToCheck})` : ""
-        } in academic year "${term.academicYear.label}"`,
+        `Subject "${subject.name}" is not assigned to this classroom in the current academic year`,
         "CURRICULUM_MISMATCH",
-      );
-    }
-
-    if (
-      curriculumEntry.streamId &&
-      curriculumEntry.streamId !== data.streamId
-    ) {
-      return sendError(
-        res,
-        400,
-        `Subject "${subject.name}" is specific to stream ${curriculumEntry.streamId}, but exam is for stream ${data.streamId || "none"}`,
-        "STREAM_MISMATCH",
       );
     }
 
@@ -149,17 +135,8 @@ export const createExam = async (req, res) => {
     let endDateTime = null;
 
     if (data.startTime && data.endTime) {
-      startDateTime = new Date(`${data.examDate}T${data.startTime}:00.000Z`);
-      endDateTime = new Date(`${data.examDate}T${data.endTime}:00.000Z`);
-
-      if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
-        return sendError(
-          res,
-          400,
-          "Invalid time format (use HH:mm:ss)",
-          "INVALID_TIME",
-        );
-      }
+      startDateTime = new Date(`${data.examDate}T${data.startTime}`);
+      endDateTime = new Date(`${data.examDate}T${data.endTime}`);
 
       if (endDateTime <= startDateTime) {
         return sendError(
@@ -184,14 +161,13 @@ export const createExam = async (req, res) => {
         },
       });
 
-      if (overlapping) {
+      if (overlapping)
         return sendError(
           res,
           409,
-          "Time conflict: Another exam overlaps in this classroom",
+          "Time conflict in this classroom",
           "TIME_CONFLICT",
         );
-      }
     }
 
     // ─── 6. Max/pass marks validation ───
@@ -204,14 +180,11 @@ export const createExam = async (req, res) => {
       where: { id: data.configId },
       include: { board: true, academicYear: true },
     });
-    if (!config)
-      return sendError(res, 404, "Exam config not found", "NOT_FOUND");
-
-    if (config.academicYearId !== term.academicYearId) {
+    if (!config || config.academicYearId !== term.academicYearId) {
       return sendError(
         res,
         400,
-        "Exam config must belong to the same academic year as the term",
+        "Invalid config or academic year mismatch",
         "CONFIG_MISMATCH",
       );
     }
@@ -543,11 +516,11 @@ export const updateExam = async (req, res) => {
             : null
           : existing.streamId;
 
-      const normalizedClassName = classroom.name.replace(/\D/g, "").trim();
-
+      // const normalizedClassName = classroom.name.replace(/\D/g, "").trim();
+      // In Update Exam
       const curriculumWhere = {
         subjectId: data.subjectId || existing.subjectId,
-        className: normalizedClassName,
+        classroomId: classroomIdToCheck,
         academicYearId: term.academicYearId,
       };
 
@@ -642,5 +615,70 @@ export const updateExam = async (req, res) => {
     }
 
     return sendError(res, 500, "Failed to update exam", "INTERNAL_ERROR");
+  }
+};
+
+// Update Exam Status (with validation)
+export const updateExamStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  const allowedTransitions = {
+    DRAFT: ["SCHEDULED", "CANCELLED"],
+    SCHEDULED: ["ONGOING", "CANCELLED"],
+    ONGOING: ["COMPLETED"],
+    COMPLETED: ["PUBLISHED"],
+    PUBLISHED: [],
+    CANCELLED: [],
+  };
+
+  try {
+    const exam = await prisma.exam.findUnique({ where: { id: Number(id) } });
+    if (!exam) return sendError(res, 404, "Exam not found");
+
+    const newStatus = status.toUpperCase();
+    if (!allowedTransitions[exam.status]?.includes(newStatus)) {
+      return sendError(
+        res,
+        400,
+        `Invalid status transition: ${exam.status} → ${newStatus}`,
+        "INVALID_STATUS_TRANSITION",
+      );
+    }
+
+    // Only ADMIN can move to COMPLETED or PUBLISHED
+    if (
+      ["COMPLETED", "PUBLISHED"].includes(newStatus) &&
+      req.user.role !== "ADMIN"
+    ) {
+      return sendError(
+        res,
+        403,
+        "Only Admin can mark as COMPLETED or PUBLISHED",
+        "FORBIDDEN",
+      );
+    }
+
+    const updated = await prisma.exam.update({
+      where: { id: Number(id) },
+      data: {
+        status: newStatus,
+        updatedById: req.user.id,
+      },
+      include: {
+        term: { id: true, termName: true },
+        classroom: true,
+        subject: true,
+      },
+    });
+
+    return sendSuccess(
+      res,
+      200,
+      updated,
+      `Exam status updated to ${newStatus}`,
+    );
+  } catch (err) {
+    return sendError(res, 500, "Failed to update exam status");
   }
 };

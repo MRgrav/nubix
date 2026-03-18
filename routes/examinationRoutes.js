@@ -23,6 +23,7 @@ import {
   createExam,
   getExams,
   updateExam,
+  updateExamStatus,
 } from "../controllers/examinationController/examController.js";
 import {
   enterExamMarks,
@@ -76,6 +77,7 @@ router.get(
   getExamMarks,
 );
 router.post("/:examId/marks", authorize("STAFF", "ADMIN"), enterExamMarks);
+router.patch("/:id/status", authorize("ADMIN"), updateExamStatus);
 
 // ────────────────────────────────────────────────
 // Results (All roles)
@@ -91,6 +93,5 @@ router.post(
   authorize("ADMIN", "STAFF"),
   calculateTermResults,
 );
-
 
 export default router;
