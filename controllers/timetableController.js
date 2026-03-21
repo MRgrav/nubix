@@ -16,7 +16,7 @@ export const createSlot = async (req, res) => {
   try {
     let {
       day,
-      slotType,
+      slotType = "CLASS",
       startTime,
       endTime,
       notes,
@@ -43,11 +43,19 @@ export const createSlot = async (req, res) => {
       return sendError(res, 400, "endTime must be after startTime");
     }
 
-    let resolvedAcademicYearId = academicYearId;
+    let resolvedAcademicYearId = academicYearId ? Number(academicYearId) : null;
+    if (!resolvedAcademicYearId && schoolId) {
+      const active = await getActiveAcademicYear(Number(schoolId));
+      if (!active)
+        return sendError(
+          res,
+          400,
+          "No active academic year found for this school",
+        );
+      resolvedAcademicYearId = active.id;
+    }
     if (!resolvedAcademicYearId) {
-      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
-      if (!activeYear) return sendError(res, 400, "No active academic year");
-      resolvedAcademicYearId = activeYear.id;
+      return sendError(res, 400, "academicYearId is required");
     }
 
     // Slot type validation
@@ -64,10 +72,30 @@ export const createSlot = async (req, res) => {
       }
     }
 
+    if (streamId) {
+      const streamExists = await prisma.stream.findUnique({
+        where: { id: Number(streamId) },
+      });
+      if (!streamExists)
+        return sendError(res, 404, "Stream not found", "STREAM_NOT_FOUND");
+    }
+    if (subjectId) {
+      const subjectExists = await prisma.subject.findUnique({
+        where: { id: Number(subjectId) },
+      });
+      if (!subjectExists) return sendError(res, 404, "Subject not found");
+    }
+    if (teacherId) {
+      const teacherExists = await prisma.staff.findUnique({
+        where: { id: Number(teacherId) },
+      });
+      if (!teacherExists) return sendError(res, 404, "Teacher not found");
+    }
+
     // Primary check: same classroom overlap
     const classroomOverlap = await prisma.timetableSlot.findFirst({
       where: {
-        academicYearId: Number(resolvedAcademicYearId),
+        academicYearId: resolvedAcademicYearId,
         day,
         classroomId: Number(classroomId),
         NOT: {
@@ -111,24 +139,19 @@ export const createSlot = async (req, res) => {
       }
     }
 
-
     const slot = await prisma.timetableSlot.create({
       data: {
         day,
         slotType,
         startMinutes,
         endMinutes,
-        notes,
-        school: { connect: { id: parseInt(schoolId) } },
-        classroom: { connect: { id: parseInt(classroomId) } },
-        subject: subjectId
-          ? { connect: { id: parseInt(subjectId) } }
-          : undefined,
-        stream: streamId ? { connect: { id: parseInt(streamId) } } : undefined,
-        teacher: teacherId
-          ? { connect: { id: parseInt(teacherId) } }
-          : undefined,
-        academicYear: { connect: { id: parseInt(resolvedAcademicYearId) } },
+        notes: notes?.trim() || null,
+        school: { connect: { id: Number(schoolId) } },
+        classroom: { connect: { id: Number(classroomId) } },
+        subject: subjectId ? { connect: { id: Number(subjectId) } } : undefined,
+        stream: streamId ? { connect: { id: Number(streamId) } } : undefined,
+        teacher: teacherId ? { connect: { id: Number(teacherId) } } : undefined,
+        academicYear: { connect: { id: resolvedAcademicYearId } },
       },
       include: {
         school: {
@@ -186,14 +209,23 @@ export const getSlots = async (req, res) => {
     classroomId,
     day,
     academicYearId,
+    streamId,
     page = 1,
     perPage = 100,
   } = req.query;
   try {
-    let resolvedAcademicYearId = academicYearId;
+    let resolvedAcademicYearId = academicYearId ? Number(academicYearId) : null;
     if (!resolvedAcademicYearId && schoolId) {
-      const activeYear = await getActiveAcademicYear(parseInt(schoolId));
-      resolvedAcademicYearId = activeYear?.id;
+      const active = await getActiveAcademicYear(Number(schoolId));
+      resolvedAcademicYearId = active?.id;
+    }
+
+    if (!resolvedAcademicYearId) {
+      return sendError(
+        res,
+        400,
+        "academicYearId is required (or provide valid schoolId)",
+      );
     }
 
     const where = {
@@ -203,83 +235,42 @@ export const getSlots = async (req, res) => {
       ...(schoolId && { schoolId: Number(schoolId) }),
       ...(classroomId && { classroomId: Number(classroomId) }),
       ...(day && { day }),
+      ...(streamId && { streamId: Number(streamId) }),
     };
 
     const pageNumber = Math.max(parseInt(page), 1);
     const limit = Math.max(parseInt(perPage), 1);
     const skip = (pageNumber - 1) * limit;
 
-    const total = await prisma.timetableSlot.count({ where });
+    const [total, slots] = await Promise.all([
+      prisma.timetableSlot.count({ where }),
+      prisma.timetableSlot.findMany({
+        where,
+        include: {
+          school: { select: { id: true, name: true } },
+          classroom: { select: { id: true, name: true, section: true } },
+          stream: { select: { id: true, name: true } },
+          subject: { select: { id: true, name: true, code: true } },
+          teacher: { select: { id: true, name: true } },
+          academicYear: { select: { id: true, label: true } },
+        },
+        orderBy: [{ day: "asc" }, { startMinutes: "asc" }],
+        skip,
+        take: limit,
+      }),
+    ]);
 
-    const slots = await prisma.timetableSlot.findMany({
-      where,
-      include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        classroom: {
-          select: {
-            id: true,
-            name: true,
-            section: true,
-          },
-        },
-        stream: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        subject: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
-        teacher: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        academicYear: {
-          select: {
-            id: true,
-            label: true,
-            isActive: true,
-          },
-        },
+    return sendSuccess(res, 200, slots, "Timetable slots fetched", {
+      pagination: {
+        total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: pageNumber,
+        perPage: limit,
       },
-      orderBy: { startMinutes: "asc" },
-      skip,
-      take: limit,
     });
-
-    const totalPages = Math.ceil(total / limit);
-
-    return sendSuccess(
-      res,
-      200,
-      slots,
-      "Timetable Slots fetched Successfully",
-      {
-        pagination: {
-          total,
-          totalPages,
-          currentPage: pageNumber,
-          perPage: limit,
-          hasNext: pageNumber < totalPages,
-          hasPrev: pageNumber > 1,
-        },
-      },
-    );
   } catch (err) {
-    console.error(err);
-    return sendError(res, 500, "Failed to Fetch Slots", "INTERNAL_ERROR");
+    console.error("Get slots error:", err);
+    return sendError(res, 500, "Failed to fetch slots", err.message);
   }
 };
 
@@ -493,118 +484,103 @@ export const getMyTeacherSlots = async (req, res) => {
     return sendError(res, 500, "Failed to fetch timetable");
   }
 };
-
 export const updateSlot = async (req, res) => {
   const { id } = req.params;
   const updates = { ...req.body };
 
   try {
-    // Handle time updates
+    // Handle time conversion
     if (updates.startTime) {
       const sm = timeToMinutes(updates.startTime);
-      if (sm == null) {
-        return sendError(res, 400, "Invalid startTime format");
-      }
+      if (sm == null) return sendError(res, 400, "Invalid startTime format");
       updates.startMinutes = sm;
     }
-
     if (updates.endTime) {
       const em = timeToMinutes(updates.endTime);
-      if (em == null) {
-        return sendError(res, 400, "Invalid endTime format");
-      }
+      if (em == null) return sendError(res, 400, "Invalid endTime format");
       updates.endMinutes = em;
     }
 
     delete updates.startTime;
     delete updates.endTime;
 
-    if (updates.slotType && updates.slotType !== "CLASS") {
-      if (updates.subjectId !== undefined) {
-        return sendError(
-          res,
-          400,
-          `subjectId should not be set for ${updates.slotType} slots`,
-        );
+    // ─── Stream existence check ───
+    if (updates.streamId !== undefined) {
+      if (updates.streamId === null) {
+        updates.stream = { disconnect: true };
+      } else {
+        const stream = await prisma.stream.findUnique({
+          where: { id: Number(updates.streamId) },
+        });
+        if (!stream)
+          return sendError(res, 404, "Stream not found", "STREAM_NOT_FOUND");
+        updates.stream = { connect: { id: Number(updates.streamId) } };
       }
-      if (updates.teacherId !== undefined) {
-        return sendError(
-          res,
-          400,
-          `teacherId should not be set for ${updates.slotType} slots`,
-        );
-      }
-      updates.subjectId = null;
-      updates.teacherId = null;
-    } else if (updates.slotType === "CLASS") {
-      // Optional: enforce subject or teacher required
-      if (!updates.subjectId && !updates.teacherId) {
-        return sendError(
-          res,
-          400,
-          "CLASS slot requires subjectId or teacherId",
-        );
-      }
+      delete updates.streamId;
     }
 
-    if (updates.subjectId) {
-      updates.subject = { connect: { id: Number(updates.subjectId) } };
+    // Similar checks for other relations
+    if (updates.subjectId !== undefined) {
+      if (updates.subjectId === null) {
+        updates.subject = { disconnect: true };
+      } else {
+        const subj = await prisma.subject.findUnique({
+          where: { id: Number(updates.subjectId) },
+        });
+        if (!subj) return sendError(res, 404, "Subject not found");
+        updates.subject = { connect: { id: Number(updates.subjectId) } };
+      }
       delete updates.subjectId;
     }
 
-    if (updates.teacherId) {
-      updates.teacher = { connect: { id: Number(updates.teacherId) } };
+    if (updates.teacherId !== undefined) {
+      if (updates.teacherId === null) {
+        updates.teacher = { disconnect: true };
+      } else {
+        const teacher = await prisma.staff.findUnique({
+          where: { id: Number(updates.teacherId) },
+        });
+        if (!teacher) return sendError(res, 404, "Teacher not found");
+        updates.teacher = { connect: { id: Number(updates.teacherId) } };
+      }
       delete updates.teacherId;
     }
 
-    if (updates.schoolId) {
-      updates.school = { connect: { id: Number(updates.schoolId) } };
-      delete updates.schoolId;
+    // Slot type rules
+    if (updates.slotType && updates.slotType !== "CLASS") {
+      updates.subject = { disconnect: true };
+      updates.teacher = { disconnect: true };
     }
 
-    if (updates.classroomId) {
-      updates.classroom = { connect: { id: Number(updates.classroomId) } };
-      delete updates.classroomId;
-    }
-
-    if (updates.academicYearId) {
-      updates.academicYear = {
-        connect: { id: Number(updates.academicYearId) },
-      };
-      delete updates.academicYearId;
-    }
-
-    const slot = await prisma.timetableSlot.update({
+    const updated = await prisma.timetableSlot.update({
       where: { id: Number(id) },
       data: updates,
       include: {
-        academicYear: {
-          select: {
-            id: true,
-            label: true,
-            isActive: true,
-          },
-        },
+        academicYear: { select: { label: true, isActive: true } },
+        classroom: { select: { name: true, section: true } },
+        subject: { select: { name: true } },
+        stream: { select: { name: true } },
+        teacher: { select: { name: true } },
       },
     });
 
-    return res.json(slot);
+    return sendSuccess(res, 200, updated, "Slot updated successfully");
   } catch (err) {
-    console.error(err);
-    if (err.code === "P2025") {
-      return sendError(res, 404, "Slot not found");
-    }
-    return sendError(res, 500, "Failed to update slot");
+    console.error("Update slot error:", err);
+    if (err.code === "P2025") return sendError(res, 404, "Slot not found");
+    if (err.code === "P2003")
+      return sendError(res, 400, "Invalid foreign key reference");
+    return sendError(res, 500, "Failed to update slot", err.message);
   }
 };
 
+// deleteSlot remains fine
 export const deleteSlot = async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.timetableSlot.delete({ where: { id: parseInt(id) } });
+    await prisma.timetableSlot.delete({ where: { id: Number(id) } });
     return sendSuccess(res, 200, null, "Slot deleted successfully");
   } catch (err) {
-    console.error(err);
     if (err.code === "P2025") return sendError(res, 404, "Slot not found");
     return sendError(res, 500, "Failed to delete slot");
   }
