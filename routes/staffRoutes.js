@@ -8,6 +8,7 @@ import {
   getMinimalTeachers,
 } from "../controllers/staffController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
+import { uploadStaffDocs } from "./../middlewares/upload.js";
 import { staffValidation } from "../middlewares/validationMiddleware.js";
 
 const router = express.Router();
@@ -22,6 +23,7 @@ router.post(
   "/",
   authenticate,
   authorize("ADMIN"),
+  uploadStaffDocs,
   staffValidation,
   createStaff,
 );
@@ -29,6 +31,7 @@ router.put(
   "/:id",
   authenticate,
   authorize("ADMIN"),
+  uploadStaffDocs,
   staffValidation,
   updateStaffMember,
 );

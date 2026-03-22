@@ -15,7 +15,7 @@ import {
 
 const router = express.Router();
 
-router.get("/", authenticate, authorize("ADMIN", "STAFF", "STUDENT"), getSlots);
+router.get("/", authenticate, authorize("ADMIN", "STAFF"), getSlots);
 router.post(
   "/slots",
   authenticate,
@@ -23,8 +23,14 @@ router.post(
   timetableSlotCreateValidation,
   createSlot,
 );
-router.get("/student", authenticate, getMyStudentTimetable);
-router.get("/teacher", authenticate, getMyTeacherSlots);
+router.get(
+  "/student",
+  authorize("STUDENT", "PARENTS"),
+  authenticate,
+  getMyStudentTimetable,
+);
+router.get("/teacher", authorize("STAFF"), authenticate, getMyTeacherSlots);
+
 router.put(
   "/slots/:id",
   authenticate,
