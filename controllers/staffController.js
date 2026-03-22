@@ -1,143 +1,165 @@
+// controllers\staffController.js
 import prisma from "../models/prisma.js";
 import bcrypt from "bcryptjs";
 import { generateSecurePassword } from "./authController.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import z from "zod";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
+import addressSchema from "./../utils/validations/address.schems.js";
+import { ensurePBAuth } from "../utils/pocketbase.js";
+import pb from "../utils/pocketbase.js";
+
+const staffDocumentMetadata = z.object({
+  documentType: z.string().min(1, "Document type is required"),
+  title: z.string().optional(),
+});
+
+const addressItemSchema = addressSchema.extend({
+  addressType: z.enum(["CURRENT", "PERMANENT", "OTHER"]).default("CURRENT"),
+});
 
 // Zod schema
 const createStaffSchema = z.object({
-  email: z.string().email("Invalid email").trim().toLowerCase(),
-  name: z.string().min(2, "Name is required and must be at least 2 characters"),
-  schoolId: z.number().int().positive("Invalid school ID"),
+  email: z.string().email().trim().toLowerCase(),
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  schoolId: z.coerce.number().int().positive("Invalid school ID"),
   employeeId: z.string().optional(),
   title: z.string().optional(),
   gender: z.string().optional(),
   employeeType: z.string().optional(),
-  role: z.string().optional(),
+  role: z.string().min(1).optional(),
   designation: z.string().optional(),
   dateOfBirth: z.string().optional(),
   dateOfJoining: z.string().optional(),
-  fatherHusbandName: z.string().optional(),
-  qualification: z.string().optional(),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  pincode: z.string().optional(),
-  location: z.string().optional(),
+
   aadharNumber: z.string().optional(),
   panNumber: z.string().optional(),
   mobile: z.string().optional(),
   alternateMobile: z.string().optional(),
   alternateEmail: z.string().optional(),
   brokerBranch: z.string().optional(),
+
   bankName: z.string().optional(),
   bankBranchName: z.string().optional(),
   bankAccountNumber: z.string().optional(),
   ifscCode: z.string().optional(),
-  // Document URLs
-  jobOfferLetterUrl: z.string().url().optional(),
-  joiningLetterUrl: z.string().url().optional(),
-  ndaUrl: z.string().url().optional(),
-  experienceLetterUrl: z.string().url().optional(),
-  relievingLetterUrl: z.string().url().optional(),
-  salarySlipUrl: z.string().url().optional(),
-  aadhaarCardUrl: z.string().url().optional(),
-  panCardUrl: z.string().url().optional(),
-  cancelledChequeUrl: z.string().url().optional(),
-  passportUrl: z.string().url().optional(),
-  sscCertificateUrl: z.string().url().optional(),
-  hscCertificateUrl: z.string().url().optional(),
-  graduationCertificateUrl: z.string().url().optional(),
+
+  isActive: z.coerce.boolean().optional().default(true),
+  employeeStatus: z
+    .enum(["ACTIVE", "ON_LEAVE", "RESIGNED", "TERMINATED", "SUSPENDED"])
+    .optional()
+    .default("ACTIVE"),
+
+  addresses: z.array(addressItemSchema).optional().default([]),
+  emergencyContact: z
+    .object({
+      name: z.string().min(2),
+      relation: z.string().optional(),
+      phone: z.string().min(10).optional(),
+      email: z.string().email().optional(),
+      isPrimary: z.boolean().optional().default(true),
+    })
+    .optional(),
+
+  qualifications: z
+    .array(
+      z.object({
+        id: z.number().int().optional(),
+        degree: z.string().min(1),
+        institution: z.string().optional(),
+        yearOfPassing: z.number().int().optional(),
+        grade: z.string().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
+
+  documents: z
+    .array(
+      z.object({
+        id: z.number().int().optional(), // existing document ID
+        documentType: z.string().min(1),
+        title: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 const updateStaffSchema = createStaffSchema.partial();
 
-const sanitizeString = (value) => {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
+const sanitize = (v) =>
+  typeof v === "string" ? v.trim() || null : (v ?? null);
+
+const parseDate = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
 };
 
-const parseDateField = (value, field) => {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    const error = new Error(`Invalid date for ${field}`);
-    error.code = "INVALID_DATE";
-    error.meta = { field };
-    throw error;
-  }
-  return parsed;
-};
+const buildStaffBase = (data) => ({
+  employeeId: sanitize(data.employeeId),
+  title: sanitize(data.title),
+  name: sanitize(data.name),
+  gender: sanitize(data.gender),
+  employeeType: sanitize(data.employeeType),
+  role: sanitize(data.role),
+  designation: sanitize(data.designation),
+  dateOfBirth: parseDate(data.dateOfBirth),
+  dateOfJoining: parseDate(data.dateOfJoining),
+  aadharNumber: sanitize(data.aadharNumber),
+  panNumber: sanitize(data.panNumber),
+  mobile: sanitize(data.mobile),
+  alternateMobile: sanitize(data.alternateMobile),
+  alternateEmail: sanitize(data.alternateEmail),
+  brokerBranch: sanitize(data.brokerBranch),
+  bankName: sanitize(data.bankName),
+  bankBranchName: sanitize(data.bankBranchName),
+  bankAccountNumber: sanitize(data.bankAccountNumber),
+  ifscCode: sanitize(data.ifscCode),
+  isActive: data.isActive ?? true,
+  employeeStatus: data.employeeStatus ?? "ACTIVE",
+});
 
-const buildStaffPayload = (data, isUpdate = false) => {
-  const payload = {};
-
-  [
-    "employeeId",
-    "title",
-    "gender",
-    "employeeType",
-    "role",
-    "designation",
-    "fatherHusbandName",
-    "qualification",
-    "address",
-    "city",
-    "state",
-    "pincode",
-    "location",
-    "aadharNumber",
-    "panNumber",
-    "mobile",
-    "alternateMobile",
-    "alternateEmail",
-    "brokerBranch",
-    "bankName",
-    "bankBranchName",
-    "bankAccountNumber",
-    "ifscCode",
-    "jobOfferLetterUrl",
-    "joiningLetterUrl",
-    "ndaUrl",
-    "experienceLetterUrl",
-    "relievingLetterUrl",
-    "salarySlipUrl",
-    "aadhaarCardUrl",
-    "panCardUrl",
-    "cancelledChequeUrl",
-    "passportUrl",
-    "sscCertificateUrl",
-    "hscCertificateUrl",
-    "graduationCertificateUrl",
-  ].forEach((field) => {
-    if (data[field] !== undefined) {
-      payload[field] = sanitizeString(data[field]);
+const parseJSONFields = (body) => {
+  const fields = [
+    "addresses",
+    "emergencyContact",
+    "qualifications",
+    "documents",
+  ];
+  for (const field of fields) {
+    if (typeof body[field] === "string") {
+      try {
+        body[field] = JSON.parse(body[field]);
+      } catch (e) {
+        // Leave as string; Zod will catch the invalid format
+      }
     }
-  });
-
-  if (data.dateOfBirth !== undefined) {
-    payload.dateOfBirth = parseDateField(data.dateOfBirth, "dateOfBirth");
   }
-  if (data.dateOfJoining !== undefined) {
-    payload.dateOfJoining = parseDateField(data.dateOfJoining, "dateOfJoining");
-  }
-
-  return payload;
+  return body;
 };
 
 export const createStaff = async (req, res) => {
   try {
-    const validated = createStaffSchema.parse(req.body);
-    const { email, name, schoolId } = validated;
+    // 1. Convert stringified JSON fields before Zod validation
+    parseJSONFields(req.body);
+    const rawData = createStaffSchema.parse(req.body);
+
+    // 2. No need to re-parse (Zod already validated the types)
+    const {
+      email,
+      name,
+      schoolId,
+      documents = [],
+      addresses = [],
+      emergencyContact,
+      qualifications = [],
+    } = rawData;
 
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedName = name.trim();
 
-    // Prevent duplicate email
+    // 3. Prevent duplicate email
     const [existingUser, existingStaff] = await Promise.all([
       prisma.user.findUnique({ where: { email: normalizedEmail } }),
       prisma.staff.findUnique({ where: { email: normalizedEmail } }),
@@ -147,12 +169,30 @@ export const createStaff = async (req, res) => {
       return sendError(res, 409, "Email already registered", "EMAIL_CONFLICT");
     }
 
-    const staffData = buildStaffPayload(validated);
+    // 4. School ownership check
+    if (req.user.schoolId && req.user.schoolId !== Number(schoolId)) {
+      return sendError(
+        res,
+        403,
+        "Cannot create staff for another school",
+        "FORBIDDEN",
+      );
+    }
 
-    const tempPassword = generateSecurePassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    // 5. File handling (must be present if documents metadata exist)
+    const files = req.files || [];
+    if (documents.length > files.length) {
+      return sendError(
+        res,
+        400,
+        "Missing files for some document metadata",
+        "FILE_MISSING",
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
+      const tempPassword = generateSecurePassword();
+      const hashedPassword = await bcrypt.hash(tempPassword, 10);
       const user = await tx.user.create({
         data: {
           email: normalizedEmail,
@@ -164,17 +204,101 @@ export const createStaff = async (req, res) => {
 
       const staff = await tx.staff.create({
         data: {
-          ...staffData,
-          name: normalizedName, // ← required field
+          ...buildStaffBase(rawData),
+          name: normalizedName,
           email: normalizedEmail,
-          school: { connect: { id: parseInt(schoolId) } },
+          school: { connect: { id: Number(schoolId) } },
           user: { connect: { id: user.id } },
+          createdBy: req.user.id ? { connect: { id: req.user.id } } : undefined,
+          ...(addresses.length > 0 && {
+            addresses: {
+              create: addresses.map((addr) => ({
+                houseNo: addr.houseNo,
+                addressLine1: addr.addressLine1,
+                addressLine2: addr.addressLine2 ?? null,
+                landmark: addr.landmark ?? null,
+                city: addr.city,
+                district: addr.district ?? null,
+                state: addr.state,
+                pinCode: addr.pinCode,
+                postOffice: addr.postOffice ?? null,
+                country: addr.country ?? "India",
+                latitude: addr.latitude ?? null,
+                longitude: addr.longitude ?? null,
+                addressType: addr.addressType || "CURRENT",
+              })),
+            },
+          }),
+          ...(emergencyContact && {
+            emergencyContacts: {
+              create: {
+                name: emergencyContact.name,
+                relation: emergencyContact.relation ?? null,
+                phone: emergencyContact.phone,
+                email: emergencyContact.email ?? null,
+                isPrimary: emergencyContact.isPrimary ?? true,
+              },
+            },
+          }),
+          ...(qualifications.length > 0 && {
+            qualifications: {
+              createMany: {
+                data: qualifications.map((q) => ({
+                  degree: q.degree,
+                  institution: q.institution ?? null,
+                  yearOfPassing: q.yearOfPassing ?? null,
+                  grade: q.grade ?? null,
+                  certificateUrl: q.certificateUrl ?? null,
+                })),
+              },
+            },
+          }),
         },
         include: {
           school: { select: { id: true, name: true, schoolCode: true } },
           user: { select: { id: true, email: true, role: true } },
         },
       });
+
+      // 6. Upload files to PocketBase
+      if (files.length > 0) {
+        console.log("⬆️ Uploading files (public mode)...");
+        await ensurePBAuth();
+
+        const uploadedDocs = [];
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const meta = documents[i] || {};
+          const documentType = meta.documentType || "OTHER";
+          const formData = new FormData();
+          formData.append("file", new Blob([file.buffer]), file.originalname);
+          formData.append("staffId", staff.id.toString());
+          formData.append("documentType", meta.documentType || "OTHER");
+          formData.append("title", meta.title || file.originalname);
+          formData.append("uploadedById", req.user.id.toString());
+          formData.append("mimeType", file.mimetype);
+          formData.append("fileSizeBytes", file.size.toString());
+
+          const pbRecord = await pb
+            .collection("staff_documents")
+            .create(formData);
+          console.log(`  ✓ Uploaded: ${pbRecord.id}`);
+
+          uploadedDocs.push({
+            staffId: staff.id,
+            documentType,
+            title: meta.title || file.originalname,
+            fileUrl: `${process.env.POCKETBASE_URL}/api/files/staff_documents/${pbRecord.id}/${pbRecord.file}`,
+            pocketbaseRecordId: pbRecord.id,
+            mimeType: file.mimetype,
+            fileSizeBytes: file.size,
+            uploadedById: req.user.id,
+          });
+        }
+        console.log(`💾 Saving ${uploadedDocs.length} document records...`);
+        await tx.staffDocument.createMany({ data: uploadedDocs });
+        console.log("✅ Documents saved");
+      }
 
       return { staff, tempPassword };
     });
@@ -231,7 +355,12 @@ export const getStaffs = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const where = {};
-    if (schoolId) where.schoolId = parseInt(schoolId);
+    // if (schoolId) where.schoolId = parseInt(schoolId);
+    if (req.user.role !== "ADMIN" && req.user.schoolId) {
+      where.schoolId = req.user.schoolId;
+    } else if (schoolId) {
+      where.schoolId = parseInt(schoolId);
+    }
     if (role) where.role = role;
 
     if (search?.trim()) {
@@ -251,6 +380,21 @@ export const getStaffs = async (req, res) => {
         school: { select: { id: true, name: true } },
         subjects: { select: { id: true, name: true } },
         user: { select: { email: true } },
+        addresses: {
+          where: { addressType: "CURRENT" },
+          take: 1,
+          select: {
+            id: true,
+            addressLine1: true,
+            city: true,
+            state: true,
+            pinCode: true,
+            addressType: true,
+          },
+        },
+        _count: {
+          select: { documents: true },
+        },
       },
       orderBy: { name: "asc" },
     });
@@ -310,6 +454,30 @@ export const getStaffMember = async (req, res) => {
         school: { select: { id: true, name: true, schoolCode: true } },
         subjects: { select: { id: true, name: true, code: true } },
         user: { select: { id: true, email: true, role: true } },
+        addresses: {
+          select: {
+            id: true,
+            addressLine1: true,
+            city: true,
+            state: true,
+            pinCode: true,
+            addressType: true,
+            latitude: true,
+            longitude: true,
+          },
+          orderBy: { addressType: "asc" },
+        },
+        documents: {
+          select: {
+            id: true,
+            documentType: true,
+            title: true,
+            fileUrl: true,
+            mimeType: true,
+            uploadedAt: true,
+          },
+          orderBy: { uploadedAt: "desc" },
+        },
       },
     });
 
@@ -408,28 +576,191 @@ export const getMinimalTeachers = async (req, res) => {
 
 export const updateStaffMember = async (req, res) => {
   const { id } = req.params;
+  const staffId = Number(id);
 
   try {
-    const staffId = parseInt(id);
-    if (isNaN(staffId)) return sendError(res, 400, "Invalid staff ID");
+    if (Number.isNaN(staffId)) {
+      return sendError(res, 400, "Invalid staff ID", "INVALID_ID");
+    }
+    parseJSONFields(req.body);
+    const data = updateStaffSchema.parse(req.body);
+    const {
+      documents = [],
+      addresses = [],
+      emergencyContact,
+      qualifications,
+      ...rest
+    } = data;
+    const files = req.files || [];
 
-    const validated = updateStaffSchema.parse(req.body);
-    const staffData = buildStaffPayload(validated, true);
-
-    if (req.body.schoolId) {
-      staffData.school = { connect: { id: parseInt(req.body.schoolId) } };
+    // 2. Enforce that every file has metadata
+    if (files.length > 0 && documents.length !== files.length) {
+      return sendError(
+        res,
+        400,
+        `Found ${documents.length} document metadata but ${files.length} file(s) uploaded`,
+        "FILE_METADATA_MISMATCH",
+      );
     }
 
-    const staff = await prisma.staff.update({
+    const existing = await prisma.staff.findUnique({
       where: { id: staffId },
-      data: staffData,
-      include: {
-        school: { select: { id: true, name: true, schoolCode: true } },
-        user: { select: { email: true } },
-      },
+      select: { id: true, schoolId: true, email: true },
     });
 
-    return sendSuccess(res, 200, staff, "Staff member updated successfully");
+    if (!existing) return sendError(res, 404, "Staff not found");
+
+    // Optional: school ownership check
+    if (req.user.schoolId && req.user.schoolId !== existing.schoolId) {
+      return sendError(
+        res,
+        403,
+        "Not authorized to update this staff",
+        "FORBIDDEN",
+      );
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updateData = buildStaffBase(data);
+
+      // 1. Replace addresses (delete all existing, create new ones)
+      if (addresses !== undefined) {
+        await tx.address.deleteMany({ where: { staffId } });
+        if (addresses.length > 0) {
+          await tx.address.createMany({
+            data: addresses.map((addr) => ({
+              ...addr,
+              staffId,
+            })),
+          });
+        }
+      }
+
+      // 2. Replace primary emergency contact (upsert)
+      if (emergencyContact !== undefined) {
+        await tx.staffEmergencyContact.upsert({
+          where: {
+            staffId_isPrimary: { staffId, isPrimary: true },
+          },
+          update: emergencyContact,
+          create: {
+            ...emergencyContact,
+            staffId,
+            isPrimary: true,
+          },
+        });
+      }
+
+      // 3. Replace qualifications (delete all existing, create new ones)
+      if (qualifications !== undefined) {
+        await tx.staffQualification.deleteMany({ where: { staffId } });
+        if (qualifications.length > 0) {
+          await tx.staffQualification.createMany({
+            data: qualifications.map((q) => ({
+              degree: q.degree,
+              institution: q.institution ?? null,
+              yearOfPassing: q.yearOfPassing ?? null,
+              grade: q.grade ?? null,
+              certificateUrl: q.certificateUrl ?? null,
+              staffId,
+            })),
+          });
+        }
+      }
+
+      // 4. Update main staff record
+      const updatedStaff = await tx.staff.update({
+        where: { id: staffId },
+        data: {
+          ...updateData,
+          updatedById: req.user.id,
+        },
+        include: {
+          school: { select: { id: true, name: true } },
+          user: { select: { email: true } },
+        },
+      });
+
+      // 5. Handle new documents (append only – does NOT update/replace existing)
+      if (files.length > 0) {
+        await ensurePBAuth();
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const meta = documents[i] || {};
+
+          let pbRecord;
+
+          if (meta.id) {
+            // Update existing PocketBase record
+            const existingDoc = await prisma.staffDocument.findUnique({
+              where: { id: meta.id },
+              select: { pocketbaseRecordId: true },
+            });
+
+            if (!existingDoc?.pocketbaseRecordId) {
+              throw new Error(`Document ${meta.id} not found`);
+            }
+
+            // Update PocketBase file
+            const formData = new FormData();
+            formData.append("file", new Blob([file.buffer]), file.originalname);
+            formData.append("documentType", meta.documentType || "OTHER");
+            formData.append("title", meta.title || file.originalname);
+            formData.append("uploadedById", req.user.id.toString());
+            formData.append("mimeType", file.mimetype);
+            formData.append("fileSizeBytes", file.size.toString());
+
+            pbRecord = await pb
+              .collection("staff_documents")
+              .update(existingDoc.pocketbaseRecordId, formData);
+
+            // Update Prisma record
+            await tx.staffDocument.update({
+              where: { id: meta.id },
+              data: {
+                documentType: meta.documentType,
+                title: meta.title || file.originalname,
+                fileUrl: `${process.env.POCKETBASE_URL}/api/files/staff_documents/${pbRecord.id}/${pbRecord.file}`,
+                mimeType: file.mimetype,
+                fileSizeBytes: file.size,
+                uploadedById: req.user.id,
+                updatedAt: new Date(),
+              },
+            });
+          } else {
+            // Create new (your existing code)
+            const formData = new FormData();
+            formData.append("file", new Blob([file.buffer]), file.originalname);
+            formData.append("staffId", staffId.toString());
+            formData.append("documentType", meta.documentType || "OTHER");
+            formData.append("title", meta.title || file.originalname);
+            formData.append("uploadedById", req.user.id.toString());
+            formData.append("mimeType", file.mimetype);
+            formData.append("fileSizeBytes", file.size.toString());
+
+            pbRecord = await pb.collection("staff_documents").create(formData);
+
+            await tx.staffDocument.create({
+              data: {
+                staffId,
+                documentType: meta.documentType,
+                title: meta.title || file.originalname,
+                fileUrl: `${process.env.POCKETBASE_URL}/api/files/staff_documents/${pbRecord.id}/${pbRecord.file}`,
+                pocketbaseRecordId: pbRecord.id,
+                mimeType: file.mimetype,
+                fileSizeBytes: file.size,
+                uploadedById: req.user.id,
+              },
+            });
+          }
+        }
+      }
+
+      return updatedStaff;
+    });
+
+    return sendSuccess(res, 200, result, "Staff updated successfully");
   } catch (err) {
     console.error("Update staff error:", err);
 
@@ -450,8 +781,19 @@ export const updateStaffMember = async (req, res) => {
       return sendError(
         res,
         409,
-        "Email or unique field already in use",
+        "Unique field conflict (email/employeeId)",
         "CONFLICT",
+      );
+    }
+
+    // PocketBase errors
+    if (err.status === 400 && err.response?.data) {
+      return sendError(
+        res,
+        500,
+        "PocketBase upload failed: " +
+          (err.response.data.message || "Validation error"),
+        "POCKETBASE_ERROR",
       );
     }
 
@@ -459,7 +801,7 @@ export const updateStaffMember = async (req, res) => {
       res,
       500,
       "Failed to update staff member",
-      "INTERNAL_ERROR",
+      err.message || "Internal error",
     );
   }
 };

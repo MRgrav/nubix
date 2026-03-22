@@ -92,8 +92,58 @@ export const createSlot = async (req, res) => {
       if (!teacherExists) return sendError(res, 404, "Teacher not found");
     }
 
-    // Primary check: same classroom overlap
-    const classroomOverlap = await prisma.timetableSlot.findFirst({
+    // === Optional but recommended: same teacher overlap ===
+    // if (teacherId) {
+    //   const teacherOverlap = await prisma.timetableSlot.findFirst({
+    //     where: {
+    //       academicYearId: Number(resolvedAcademicYearId),
+    //       day,
+    //       teacherId: Number(teacherId),
+    //       NOT: {
+    //         OR: [
+    //           { endMinutes: { lte: startMinutes } },
+    //           { startMinutes: { gte: endMinutes } },
+    //         ],
+    //       },
+    //     },
+    //   });
+
+    //   if (teacherOverlap) {
+    //     return sendError(
+    //       res,
+    //       409,
+    //       "Teacher is already assigned to another slot at the same time",
+    //       "TEACHER_CONFLICT",
+    //     );
+    //   }
+    // }
+
+    if (teacherId && subjectId) {
+      const subjectTeacherOverlap = await prisma.timetableSlot.findFirst({
+        where: {
+          academicYearId: resolvedAcademicYearId,
+          day,
+          teacherId: Number(teacherId),
+          subjectId: Number(subjectId),
+          NOT: {
+            OR: [
+              { endMinutes: { lte: startMinutes } },
+              { startMinutes: { gte: endMinutes } },
+            ],
+          },
+        },
+      });
+      if (subjectTeacherOverlap) {
+        return sendError(
+          res,
+          409,
+          "Teacher is already teaching this subject at this time in another class",
+        );
+      }
+    }
+
+    // Only block if it's the SAME subject OR SAME stream (prevents duplicates within stream/subject)
+    const hasConflict = await prisma.timetableSlot.findFirst({
       where: {
         academicYearId: resolvedAcademicYearId,
         day,
@@ -104,96 +154,101 @@ export const createSlot = async (req, res) => {
             { startMinutes: { gte: endMinutes } },
           ],
         },
+        OR: [
+          subjectId ? { subjectId: Number(subjectId) } : {},
+          streamId ? { streamId: Number(streamId) } : {},
+          ...(subjectId == null && streamId == null
+            ? [{ subjectId: null, streamId: null }]
+            : []),
+        ],
       },
     });
 
-    if (classroomOverlap) {
-      return sendError(
-        res,
-        409,
-        "Time slot overlaps with existing slot in the same classroom",
-      );
+    if (hasConflict) {
+      return sendError(res, 409, "Time slot overlaps", "CLASSROOM_CONFLICT", {
+        conflictWith: {
+          id: hasConflict.id,
+          day: hasConflict.day,
+          time: `${Math.floor(hasConflict.startMinutes / 60)
+            .toString()
+            .padStart(
+              2,
+              "0",
+            )}:${(hasConflict.startMinutes % 60).toString().padStart(2, "0")} - ${Math.floor(
+            hasConflict.endMinutes / 60,
+          )
+            .toString()
+            .padStart(
+              2,
+              "0",
+            )}:${(hasConflict.endMinutes % 60).toString().padStart(2, "0")}`,
+          subject: hasConflict.subject?.name,
+          stream: hasConflict.stream?.name,
+        },
+      });
     }
-    // === Optional but recommended: same teacher overlap ===
-    if (teacherId) {
-      const teacherOverlap = await prisma.timetableSlot.findFirst({
-        where: {
-          academicYearId: Number(resolvedAcademicYearId),
+
+    const slot = await prisma.$transaction(async (tx) => {
+      return tx.timetableSlot.create({
+        data: {
           day,
-          teacherId: Number(teacherId),
-          NOT: {
-            OR: [
-              { endMinutes: { lte: startMinutes } },
-              { startMinutes: { gte: endMinutes } },
-            ],
+          slotType,
+          startMinutes,
+          endMinutes,
+          notes: notes?.trim() || null,
+          school: { connect: { id: Number(schoolId) } },
+          classroom: { connect: { id: Number(classroomId) } },
+          subject: subjectId
+            ? { connect: { id: Number(subjectId) } }
+            : undefined,
+          stream: streamId ? { connect: { id: Number(streamId) } } : undefined,
+          teacher: teacherId
+            ? { connect: { id: Number(teacherId) } }
+            : undefined,
+          academicYear: { connect: { id: resolvedAcademicYearId } },
+        },
+        include: {
+          school: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          classroom: {
+            select: {
+              id: true,
+              name: true,
+              section: true,
+            },
+          },
+          subject: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+          stream: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          teacher: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          academicYear: {
+            select: {
+              id: true,
+              label: true,
+              isActive: true,
+            },
           },
         },
       });
-
-      if (teacherOverlap) {
-        return sendError(
-          res,
-          409,
-          "Teacher is already assigned to another slot at the same time",
-        );
-      }
-    }
-
-    const slot = await prisma.timetableSlot.create({
-      data: {
-        day,
-        slotType,
-        startMinutes,
-        endMinutes,
-        notes: notes?.trim() || null,
-        school: { connect: { id: Number(schoolId) } },
-        classroom: { connect: { id: Number(classroomId) } },
-        subject: subjectId ? { connect: { id: Number(subjectId) } } : undefined,
-        stream: streamId ? { connect: { id: Number(streamId) } } : undefined,
-        teacher: teacherId ? { connect: { id: Number(teacherId) } } : undefined,
-        academicYear: { connect: { id: resolvedAcademicYearId } },
-      },
-      include: {
-        school: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        classroom: {
-          select: {
-            id: true,
-            name: true,
-            section: true,
-          },
-        },
-        subject: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
-        stream: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        teacher: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        academicYear: {
-          select: {
-            id: true,
-            label: true,
-            isActive: true,
-          },
-        },
-      },
     });
 
     return sendSuccess(res, 201, slot, "Timetable slot created successfully");

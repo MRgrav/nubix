@@ -110,11 +110,34 @@ export const studentProfileValidation = [
 ];
 
 export const staffValidation = [
-  body("name").notEmpty().withMessage("Staff name is required"),
-  body("email").isEmail().withMessage("Must be a valid email"),
-  body("role").notEmpty().withMessage("Staff role is required"),
-  body("schoolId").isInt().withMessage("Valid school ID is required"),
-  validateRequest,
+  body("email").trim().isEmail().withMessage("Invalid email").normalizeEmail(),
+
+  body("name")
+    .trim()
+    .isLength({ min: 2 })
+    .withMessage("Name is required and must be at least 2 characters"),
+
+  body("schoolId").isInt({ min: 1 }).withMessage("Invalid school ID"),
+
+  // Make role optional (matches your Zod schema)
+  body("role").optional().isString().withMessage("Role must be a string"),
+
+  // Other optional fields (no .notEmpty())
+  body("designation").optional(),
+  body("gender").optional(),
+  body("mobile")
+    .optional()
+    .isMobilePhone("en-IN")
+    .withMessage("Invalid mobile number"),
+
+  body("employeeId").optional(),
+  body("title").optional(),
+  body("employeeType").optional(),
+  body("dateOfBirth").optional().isISO8601(),
+  body("dateOfJoining").optional().isISO8601(),
+
+  // Allow documents array (no strict validation here – Zod handles it)
+  body("documents").optional().isArray(),
 ];
 
 export const assignmentValidation = [

@@ -222,24 +222,15 @@ model Staff {
   hiredAt DateTime @default(now())
 
   // --- Basic details tab ---
-  employeeId        String?   @unique
-  title             String?
-  name              String
-  gender            String?
-  employeeType      String?
-  role              String
-  designation       String?
-  dateOfBirth       DateTime?
-  dateOfJoining     DateTime?
-  fatherHusbandName String?
-  qualification     String?
-
-  // --- Address / location block ---
-  address  String?
-  city     String?
-  state    String?
-  pincode  String?
-  location String?
+  employeeId    String?   @unique
+  title         String?
+  name          String
+  gender        String?
+  employeeType  String?
+  role          String?
+  designation   String?
+  dateOfBirth   DateTime?
+  dateOfJoining DateTime?
 
   // --- Identity details ---
   aadharNumber String?
@@ -258,20 +249,8 @@ model Staff {
   bankAccountNumber String?
   ifscCode          String?
 
-  // --- Document uploads tab ---
-  jobOfferLetterUrl        String?
-  joiningLetterUrl         String?
-  ndaUrl                   String?
-  experienceLetterUrl      String?
-  relievingLetterUrl       String?
-  salarySlipUrl            String?
-  aadhaarCardUrl           String?
-  panCardUrl               String?
-  cancelledChequeUrl       String?
-  passportUrl              String?
-  sscCertificateUrl        String?
-  hscCertificateUrl        String?
-  graduationCertificateUrl String?
+  isActive       Boolean         @default(true)
+  employeeStatus EmployeeStatus? @default(ACTIVE)
 
   school   School @relation(fields: [schoolId], references: [id])
   schoolId Int
@@ -290,6 +269,68 @@ model Staff {
   timetableSlots TimetableSlot[]
 
   teacherAssignments TeacherAssignment[]
+  addresses          Address[]               @relation("StaffAddresses")
+  documents          StaffDocument[]
+  emergencyContacts  StaffEmergencyContact[]
+  qualifications     StaffQualification[]
+
+  createdById Int?
+  updatedById Int?
+  createdBy   User? @relation("CreatedStaff", fields: [createdById], references: [id])
+  updatedBy   User? @relation("UpdatedStaff", fields: [updatedById], references: [id])
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  RESIGNED
+  TERMINATED
+  SUSPENDED
+}
+
+model StaffDocument {
+  id                 Int      @id @default(autoincrement())
+  staffId            Int
+  staff              Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  documentType       String
+  title              String?
+  fileUrl            String
+  pocketbaseRecordId String?
+  mimeType           String?
+  fileSizeBytes      Int?
+  uploadedById       Int?
+  uploadedBy         User?    @relation("UploadedStaffDocuments", fields: [uploadedById], references: [id])
+  uploadedAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([staffId])
+  @@index([documentType])
+}
+
+model StaffEmergencyContact {
+  id        Int     @id @default(autoincrement())
+  staffId   Int
+  staff     Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  name      String
+  relation  String?
+  phone     String
+  email     String?
+  isPrimary Boolean @default(false)
+
+  @@index([staffId])
+}
+
+model StaffQualification {
+  id             Int     @id @default(autoincrement())
+  staffId        Int
+  staff          Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  degree         String
+  institution    String?
+  yearOfPassing  Int?
+  grade          String?
+  certificateUrl String?
+
+  @@index([staffId])
 }
 
 enum Role {
@@ -318,7 +359,6 @@ model User {
   student Student?
   staff   Staff?
 
-  // optional relation to a School (useful for ADMIN or general user association)
   school                School?        @relation(fields: [schoolId], references: [id])
   schoolId              Int?
   announcements         Announcement[] @relation("UserAnnouncements")
@@ -355,7 +395,11 @@ model User {
   calculatedResults ExamResult[] @relation("ResultCalculatedBy")
   updatedResults    ExamResult[] @relation("ResultUpdatedBy")
 
-  uploadedDocuments AdmissionDocument[] @relation("UploadedDocuments")
+  createdStaff Staff[] @relation("CreatedStaff")
+  updatedStaff Staff[] @relation("UpdatedStaff")
+
+  uploadedStaffDocuments StaffDocument[]     @relation("UploadedStaffDocuments")
+  uploadedDocuments      AdmissionDocument[] @relation("UploadedDocuments")
 }
 
 model Attendance {
@@ -365,7 +409,6 @@ model Attendance {
   note      String?
   createdAt DateTime         @default(now())
 
-  // Either studentId or staffId will be set
   student   Student? @relation(fields: [studentId], references: [id])
   studentId Int?
 
@@ -375,7 +418,6 @@ model Attendance {
   academicYearId Int
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
 
-  // Subject (optional - for subject-wise attendance)
   subject   Subject? @relation(fields: [subjectId], references: [id])
   subjectId Int?
 
@@ -1174,7 +1216,6 @@ enum Gender {
 model Address {
   id Int @id @default(autoincrement())
 
-  // Core address fields (required & optional as per common Indian school needs)
   houseNo      String? // House/Flat/Plot number
   addressLine1 String // Main street/address (required)
   addressLine2 String? // Additional details (colony, area, etc.)
@@ -1211,9 +1252,11 @@ model Address {
   permanentStudents Student[] @relation("StudentPermanentAddress")
 
   // Future extensions (commented out — add when needed)
-  // staffAddresses             Staff[]              @relation("StaffAddress")
+  staffId Int?
+  staff   Staff? @relation("StaffAddresses", fields: [staffId], references: [id], onDelete: SetNull)
   // schoolBranches             School[]             @relation("SchoolBranchAddress")
 
+  @@unique([staffId, addressType])
   @@index([pinCode])
   @@index([city, state])
   @@index([addressType])
