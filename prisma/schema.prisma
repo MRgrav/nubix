@@ -317,6 +317,7 @@ model StaffEmergencyContact {
   email     String?
   isPrimary Boolean @default(false)
 
+  @@unique([staffId, isPrimary])
   @@index([staffId])
 }
 
