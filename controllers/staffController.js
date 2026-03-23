@@ -126,6 +126,7 @@ const parseJSONFields = (body) => {
     "emergencyContact",
     "qualifications",
     "documents",
+    "documentsMeta",
   ];
   for (const field of fields) {
     if (typeof body[field] === "string") {
@@ -582,7 +583,15 @@ export const updateStaffMember = async (req, res) => {
     if (Number.isNaN(staffId)) {
       return sendError(res, 400, "Invalid staff ID", "INVALID_ID");
     }
+
+    // Parse JSON fields (including documentsMeta)
     parseJSONFields(req.body);
+
+    // Map documentsMeta to documents if present
+    if (req.body.documentsMeta && !req.body.documents) {
+      req.body.documents = req.body.documentsMeta;
+    }
+
     const data = updateStaffSchema.parse(req.body);
     const {
       documents = [],
@@ -593,7 +602,7 @@ export const updateStaffMember = async (req, res) => {
     } = data;
     const files = req.files || [];
 
-    // 2. Enforce that every file has metadata
+    // Validate file-metadata match
     if (files.length > 0 && documents.length !== files.length) {
       return sendError(
         res,
@@ -605,12 +614,11 @@ export const updateStaffMember = async (req, res) => {
 
     const existing = await prisma.staff.findUnique({
       where: { id: staffId },
-      select: { id: true, schoolId: true, email: true },
+      select: { id: true, schoolId: true, email: true, employeeStatus: true },
     });
 
     if (!existing) return sendError(res, 404, "Staff not found");
 
-    // Optional: school ownership check
     if (req.user.schoolId && req.user.schoolId !== existing.schoolId) {
       return sendError(
         res,
@@ -623,35 +631,33 @@ export const updateStaffMember = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       const updateData = buildStaffBase(data);
 
-      // 1. Replace addresses (delete all existing, create new ones)
+      // 1. Replace addresses
       if (addresses !== undefined) {
         await tx.address.deleteMany({ where: { staffId } });
         if (addresses.length > 0) {
           await tx.address.createMany({
-            data: addresses.map((addr) => ({
-              ...addr,
-              staffId,
-            })),
+            data: addresses.map((addr) => ({ ...addr, staffId })),
           });
         }
       }
 
-      // 2. Replace primary emergency contact (upsert)
+      // 2. Replace emergency contact (delete primary, then create new)
       if (emergencyContact !== undefined) {
-        await tx.staffEmergencyContact.upsert({
-          where: {
-            staffId_isPrimary: { staffId, isPrimary: true },
-          },
-          update: emergencyContact,
-          create: {
-            ...emergencyContact,
-            staffId,
-            isPrimary: true,
-          },
+        await tx.staffEmergencyContact.deleteMany({
+          where: { staffId, isPrimary: true },
         });
+        if (emergencyContact && Object.keys(emergencyContact).length) {
+          await tx.staffEmergencyContact.create({
+            data: {
+              ...emergencyContact,
+              staffId,
+              isPrimary: true,
+            },
+          });
+        }
       }
 
-      // 3. Replace qualifications (delete all existing, create new ones)
+      // 3. Replace qualifications
       if (qualifications !== undefined) {
         await tx.staffQualification.deleteMany({ where: { staffId } });
         if (qualifications.length > 0) {
@@ -681,28 +687,28 @@ export const updateStaffMember = async (req, res) => {
         },
       });
 
-      // 5. Handle new documents (append only – does NOT update/replace existing)
+      // 5. Handle documents
       if (files.length > 0) {
         await ensurePBAuth();
 
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
           const meta = documents[i] || {};
+          if (meta.id && typeof meta.id === "string")
+            meta.id = parseInt(meta.id, 10);
 
           let pbRecord;
 
           if (meta.id) {
-            // Update existing PocketBase record
-            const existingDoc = await prisma.staffDocument.findUnique({
+            // ✅ Use transaction client for the query
+            const existingDoc = await tx.staffDocument.findUnique({
               where: { id: meta.id },
               select: { pocketbaseRecordId: true },
             });
-
             if (!existingDoc?.pocketbaseRecordId) {
               throw new Error(`Document ${meta.id} not found`);
             }
 
-            // Update PocketBase file
             const formData = new FormData();
             formData.append("file", new Blob([file.buffer]), file.originalname);
             formData.append("documentType", meta.documentType || "OTHER");
@@ -715,7 +721,6 @@ export const updateStaffMember = async (req, res) => {
               .collection("staff_documents")
               .update(existingDoc.pocketbaseRecordId, formData);
 
-            // Update Prisma record
             await tx.staffDocument.update({
               where: { id: meta.id },
               data: {
@@ -728,8 +733,8 @@ export const updateStaffMember = async (req, res) => {
                 updatedAt: new Date(),
               },
             });
+            console.log(`✅ Document ${meta.id} updated`);
           } else {
-            // Create new (your existing code)
             const formData = new FormData();
             formData.append("file", new Blob([file.buffer]), file.originalname);
             formData.append("staffId", staffId.toString());
@@ -753,6 +758,9 @@ export const updateStaffMember = async (req, res) => {
                 uploadedById: req.user.id,
               },
             });
+            console.log(
+              `✅ New document created (PocketBase ID: ${pbRecord.id})`,
+            );
           }
         }
       }
@@ -762,8 +770,26 @@ export const updateStaffMember = async (req, res) => {
 
     return sendSuccess(res, 200, result, "Staff updated successfully");
   } catch (err) {
-    console.error("Update staff error:", err);
+    // Enhanced error logging
+    console.error("=== UPDATE STAFF ERROR ===");
+    console.error("Staff ID:", staffId);
+    console.error("User ID:", req.user?.id, "Role:", req.user?.role);
+    console.error("Error name:", err.name);
+    console.error("Error message:", err.message);
+    if (err instanceof z.ZodError) {
+      console.error(
+        "Zod validation errors:",
+        JSON.stringify(err.errors, null, 2),
+      );
+    } else if (err.code === "P2002") {
+      console.error("Prisma unique constraint violation:", err.meta);
+    } else if (err.status === 400 && err.response?.data) {
+      console.error("PocketBase error:", err.response.data);
+    } else {
+      console.error("Stack trace:", err.stack);
+    }
 
+    // Zod validation error
     if (err instanceof z.ZodError) {
       return sendError(
         res,
@@ -773,10 +799,10 @@ export const updateStaffMember = async (req, res) => {
       );
     }
 
+    // Prisma specific errors
     if (err.code === "P2025") {
       return sendError(res, 404, "Staff member not found", "NOT_FOUND");
     }
-
     if (err.code === "P2002") {
       return sendError(
         res,
@@ -797,6 +823,7 @@ export const updateStaffMember = async (req, res) => {
       );
     }
 
+    // Fallback
     return sendError(
       res,
       500,
