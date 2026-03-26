@@ -31,27 +31,27 @@ export const loginValidation = [
   validateRequest,
 ];
 
-export const schoolValidation = [
-  body("name")
-    .trim()
-    .notEmpty()
-    .withMessage("School name is required")
-    .isLength({ min: 3, max: 100 })
-    .withMessage("School name must be between 3 and 100 characters"),
+// export const schoolValidation = [
+//   body("name")
+//     .trim()
+//     .notEmpty()
+//     .withMessage("School name is required")
+//     .isLength({ min: 3, max: 100 })
+//     .withMessage("School name must be between 3 and 100 characters"),
 
-  body("schoolCode")
-    .trim()
-    .notEmpty()
-    .withMessage("School code is required")
-    .isLength({ min: 5, max: 5 })
-    .withMessage("School code must be exactly 5 characters")
-    .matches(/^\d{5}$/)
-    .withMessage("School code must be exactly 5 digits (00000-99999)"),
+//   body("schoolCode")
+//     .trim()
+//     .notEmpty()
+//     .withMessage("School code is required")
+//     .isLength({ min: 5, max: 5 })
+//     .withMessage("School code must be exactly 5 characters")
+//     .matches(/^\d{5}$/)
+//     .withMessage("School code must be exactly 5 digits (00000-99999)"),
 
-  body("address").optional().trim(),
+//   body("address").optional().trim(),
 
-  validateRequest,
-];
+//   validateRequest,
+// ];
 
 export const studentValidation = [
   body("name").notEmpty().withMessage("Student name is required"),

@@ -9,10 +9,10 @@ import addressSchema from "./../utils/validations/address.schems.js";
 import { ensurePBAuth } from "../utils/pocketbase.js";
 import pb from "../utils/pocketbase.js";
 
-const staffDocumentMetadata = z.object({
-  documentType: z.string().min(1, "Document type is required"),
-  title: z.string().optional(),
-});
+// const staffDocumentMetadata = z.object({
+//   documentType: z.string().min(1, "Document type is required"),
+//   title: z.string().optional(),
+// });
 
 const addressItemSchema = addressSchema.extend({
   addressType: z.enum(["CURRENT", "PERMANENT", "OTHER"]).default("CURRENT"),
@@ -694,37 +694,55 @@ export const updateStaffMember = async (req, res) => {
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
           const meta = documents[i] || {};
-          if (meta.id && typeof meta.id === "string")
-            meta.id = parseInt(meta.id, 10);
+          const docType = meta.documentType;
+
+          // Ensure documentType is provided
+          if (!docType) {
+            throw new Error(`Document type is required at index ${i}`);
+          }
+
+          // If an id is provided, we use that to locate the document (primary key)
+          // Otherwise, we look up by staffId + documentType
+          let existingDoc = null;
+          if (meta.id) {
+            const idNum =
+              typeof meta.id === "string" ? parseInt(meta.id, 10) : meta.id;
+            existingDoc = await tx.staffDocument.findUnique({
+              where: { id: idNum },
+              select: { id: true, pocketbaseRecordId: true },
+            });
+          } else {
+            // Try to find by (staffId, documentType) – thanks to unique constraint, there will be at most one
+            existingDoc = await tx.staffDocument.findUnique({
+              where: {
+                staffId_documentType: { staffId, documentType: docType },
+              },
+              select: { id: true, pocketbaseRecordId: true },
+            });
+          }
+
+          const formData = new FormData();
+          formData.append("file", new Blob([file.buffer]), file.originalname);
+          formData.append("staffId", staffId.toString());
+          formData.append("documentType", docType);
+          formData.append("title", meta.title || file.originalname);
+          formData.append("uploadedById", req.user.id.toString());
+          formData.append("mimeType", file.mimetype);
+          formData.append("fileSizeBytes", file.size.toString());
 
           let pbRecord;
 
-          if (meta.id) {
-            // ✅ Use transaction client for the query
-            const existingDoc = await tx.staffDocument.findUnique({
-              where: { id: meta.id },
-              select: { pocketbaseRecordId: true },
-            });
-            if (!existingDoc?.pocketbaseRecordId) {
-              throw new Error(`Document ${meta.id} not found`);
-            }
-
-            const formData = new FormData();
-            formData.append("file", new Blob([file.buffer]), file.originalname);
-            formData.append("documentType", meta.documentType || "OTHER");
-            formData.append("title", meta.title || file.originalname);
-            formData.append("uploadedById", req.user.id.toString());
-            formData.append("mimeType", file.mimetype);
-            formData.append("fileSizeBytes", file.size.toString());
-
+          if (existingDoc?.pocketbaseRecordId) {
+            // Update existing PocketBase record
             pbRecord = await pb
               .collection("staff_documents")
               .update(existingDoc.pocketbaseRecordId, formData);
 
+            // Update Prisma record
             await tx.staffDocument.update({
-              where: { id: meta.id },
+              where: { id: existingDoc.id },
               data: {
-                documentType: meta.documentType,
+                documentType: docType,
                 title: meta.title || file.originalname,
                 fileUrl: `${process.env.POCKETBASE_URL}/api/files/staff_documents/${pbRecord.id}/${pbRecord.file}`,
                 mimeType: file.mimetype,
@@ -733,23 +751,17 @@ export const updateStaffMember = async (req, res) => {
                 updatedAt: new Date(),
               },
             });
-            console.log(`✅ Document ${meta.id} updated`);
+            console.log(
+              `✅ Document ${existingDoc.id} updated (type: ${docType})`,
+            );
           } else {
-            const formData = new FormData();
-            formData.append("file", new Blob([file.buffer]), file.originalname);
-            formData.append("staffId", staffId.toString());
-            formData.append("documentType", meta.documentType || "OTHER");
-            formData.append("title", meta.title || file.originalname);
-            formData.append("uploadedById", req.user.id.toString());
-            formData.append("mimeType", file.mimetype);
-            formData.append("fileSizeBytes", file.size.toString());
-
+            // Create new document
             pbRecord = await pb.collection("staff_documents").create(formData);
 
             await tx.staffDocument.create({
               data: {
                 staffId,
-                documentType: meta.documentType,
+                documentType: docType,
                 title: meta.title || file.originalname,
                 fileUrl: `${process.env.POCKETBASE_URL}/api/files/staff_documents/${pbRecord.id}/${pbRecord.file}`,
                 pocketbaseRecordId: pbRecord.id,
@@ -758,9 +770,7 @@ export const updateStaffMember = async (req, res) => {
                 uploadedById: req.user.id,
               },
             });
-            console.log(
-              `✅ New document created (PocketBase ID: ${pbRecord.id})`,
-            );
+            console.log(`✅ New document created (type: ${docType})`);
           }
         }
       }

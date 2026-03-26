@@ -4,7 +4,7 @@ import { de } from "zod/locales";
 const addressSchema = z.object({
   houseNo: z.string().optional(),
   addressLine1: z.string().min(1, "Address line 1 required"),
-  addressLine2: z.string().optional(),
+  addressLine2: z.string().optional().nullish(),
   landmark: z.string().optional(),
   city: z.string().min(1, "City required"),
   district: z.string().optional(),
@@ -15,8 +15,8 @@ const addressSchema = z.object({
   addressType: z
     .enum(["CURRENT", "PERMANENT", "CORRESPONDENCE", "OTHER"])
     .default("CURRENT"),
-  latitude: z.number().optional(),
-  longitude: z.number().optional(),
+  latitude: z.number().optional().nullish(),
+  longitude: z.number().optional().nullish(),
 });
 
 export default addressSchema;

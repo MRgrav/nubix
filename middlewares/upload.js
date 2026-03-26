@@ -18,3 +18,11 @@ export const uploadStaffDocs = multer({
     files: 15,
   },
 }).array("documents", 10);
+
+export const uploadSchoolDocs = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 15,
+  },
+}).array("documents", 10);

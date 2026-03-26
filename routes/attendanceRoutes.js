@@ -116,11 +116,6 @@ router.put(
 ); // reuse update method
 
 // Delete attendance (generic)
-router.delete(
-  "/:id",
-  authenticate,
-  authorize("ADMIN", "STAFF"),
-  deleteAttendance,
-);
+router.delete("/:id", authenticate, authorize("ADMIN"), deleteAttendance);
 
 export default router;
