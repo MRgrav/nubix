@@ -12,6 +12,7 @@ import {
   bulkInsertAttendance,
   canTeacherMarkAttendanceFor,
   canUpdateAttendance,
+  upsertAttendance,
 } from "../utils/attendanceTableHelper.js";
 
 /**
@@ -87,7 +88,7 @@ export const markStudentAttendance = async (req, res) => {
       );
     }
     if (!requiresSubject && subjectId) {
-      return sendError(res, 400, "Subject ID is not required for this class");
+      return sendError(res, 400, "Subject ID is not allowed for this class");
     }
 
     const attendanceDate = date ? new Date(date) : new Date();
@@ -112,7 +113,7 @@ export const markStudentAttendance = async (req, res) => {
     console.log(`Attendance authorized via ${auth.source}`);
 
     // ⭐ UPSERT INSERT
-    const attendance = await insertAttendance(
+    const attendance = await upsertAttendance(
       {
         studentId: parseInt(studentId),
         staffId: null,
@@ -123,25 +124,26 @@ export const markStudentAttendance = async (req, res) => {
         subjectId: subjectId ? parseInt(subjectId) : null,
       },
       academicYearLabel,
+      req,
     );
 
     // Fetch related data for response
-    const academicYear = await prisma.academicYear.findUnique({
-      where: { id: resolvedAcademicYearId },
-      select: { id: true, label: true },
-    });
-
-    const studentInfo = await prisma.student.findUnique({
-      where: { id: parseInt(studentId) },
-      select: { id: true, name: true, grade: true },
-    });
-
-    const subject = subjectId
-      ? await prisma.subject.findUnique({
-          where: { id: parseInt(subjectId) },
-          select: { id: true, name: true },
-        })
-      : null;
+    const [academicYear, studentInfo, subject] = await Promise.all([
+      prisma.academicYear.findUnique({
+        where: { id: resolvedAcademicYearId },
+        select: { id: true, label: true },
+      }),
+      prisma.student.findUnique({
+        where: { id: parseInt(studentId) },
+        select: { id: true, name: true, grade: true },
+      }),
+      subjectId
+        ? prisma.subject.findUnique({
+            where: { id: parseInt(subjectId) },
+            select: { id: true, name: true },
+          })
+        : null,
+    ]);
 
     return sendSuccess(
       res,

@@ -145,6 +145,78 @@ export const insertAttendance = async (data, academicYearLabel) => {
 };
 
 /**
+ * UPSERT attendance - prevents duplicate records for same day
+ */
+export const upsertAttendance = async (data, academicYearLabel, req) => {
+  const tableName = await ensureAttendanceTable(academicYearLabel);
+  const { studentId, staffId, date, status, note, academicYearId, subjectId } =
+    data;
+
+  const attendanceDate = new Date(date).toISOString().split("T")[0];
+
+  // Check if record already exists
+  const existing = await attendanceExists(
+    {
+      studentId,
+      date: attendanceDate,
+      academicYearId,
+      subjectId,
+    },
+    academicYearLabel,
+  );
+
+  if (existing) {
+    // Check permission to update
+    const canUpdate =
+      canUpdateAttendance(req) ||
+      (
+        await canTeacherMarkAttendanceFor(req, {
+          studentId,
+          subjectId,
+          date: attendanceDate,
+          academicYearId,
+        })
+      ).allowed;
+
+    if (!canUpdate) {
+      throw new Error("Unauthorized to update existing attendance");
+    }
+
+    // Update existing record
+    const result = await prisma.$queryRawUnsafe(
+      `
+      UPDATE ${tableName}
+      SET status = $1, note = $2, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE id = $3
+      RETURNING *
+      `,
+      status,
+      note || null,
+      existing.id,
+    );
+    return result[0];
+  } else {
+    // Insert new record
+    const result = await prisma.$queryRawUnsafe(
+      `
+      INSERT INTO ${tableName}
+        (date, status, note, "studentId", "staffId", "academicYearId", "subjectId", "createdAt", "updatedAt")
+      VALUES ($1::date, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+      `,
+      attendanceDate,
+      status,
+      note || null,
+      studentId || null,
+      staffId || null,
+      academicYearId,
+      subjectId || null,
+    );
+    return result[0];
+  }
+};
+
+/**
  * Query attendance from year-specific table
  */
 export const queryAttendance = async (
