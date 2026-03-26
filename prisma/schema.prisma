@@ -97,7 +97,6 @@ model School {
   id           Int      @id @default(autoincrement())
   name         String
   schoolCode   String   @unique @db.Char(5)
-  address      String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   rollNoFormat String?
@@ -113,6 +112,28 @@ model School {
   curriculumSubjects CurriculumSubject[]
   admissionRequests  AdmissionRequest[]
   boards             Board[]
+  address            Address?            @relation("SchoolAddress")
+  documents          SchoolDocument[]
+}
+
+model SchoolDocument {
+  id                 Int      @id @default(autoincrement())
+  schoolId           Int
+  school             School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  documentType       String
+  title              String?
+  fileUrl            String
+  pocketbaseRecordId String?
+  mimeType           String?
+  fileSizeBytes      Int?
+  uploadedById       Int?
+  uploadedBy         User?    @relation("UploadedSchoolDocuments", fields: [uploadedById], references: [id])
+  uploadedAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([schoolId, documentType])
+  @@index([schoolId])
+  @@index([documentType])
 }
 
 enum AssignmentStatus {
@@ -303,6 +324,7 @@ model StaffDocument {
   uploadedAt         DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  @@unique([staffId, documentType])
   @@index([staffId])
   @@index([documentType])
 }
@@ -401,6 +423,7 @@ model User {
 
   uploadedStaffDocuments StaffDocument[]     @relation("UploadedStaffDocuments")
   uploadedDocuments      AdmissionDocument[] @relation("UploadedDocuments")
+  uploadedSchoolDocs     SchoolDocument[]    @relation("UploadedSchoolDocuments")
 }
 
 model Attendance {
@@ -1102,7 +1125,8 @@ model AdmissionRequest {
   totalMarksObtainedInPrevClass Int?
   fullMarksInPrevClass          Int?
 
-  admissionForClass String?
+  admissionForClass  String?
+  requestedForStream String?
 
   requestedClassroomId Int?
   requestedClassroom   Classroom? @relation(fields: [requestedClassroomId], references: [id])
@@ -1253,9 +1277,11 @@ model Address {
   permanentStudents Student[] @relation("StudentPermanentAddress")
 
   // Future extensions (commented out — add when needed)
-  staffId Int?
-  staff   Staff? @relation("StaffAddresses", fields: [staffId], references: [id], onDelete: SetNull)
+  staffId  Int?
+  staff    Staff?  @relation("StaffAddresses", fields: [staffId], references: [id], onDelete: SetNull)
   // schoolBranches             School[]             @relation("SchoolBranchAddress")
+  schoolId Int?    @unique
+  school   School? @relation("SchoolAddress", fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@unique([staffId, addressType])
   @@index([pinCode])

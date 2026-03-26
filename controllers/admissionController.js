@@ -24,7 +24,27 @@ const addressSchema = z.object({
   longitude: z.number().optional(),
 });
 
-const admissionDocumentSchema = z.object({
+const parseJSONFields = (body) => {
+  const fields = [
+    "currentAddress",
+    "permanentAddress",
+    "parents",
+    "electiveSubjects",
+    "documents",
+  ];
+  for (const field of fields) {
+    if (typeof body[field] === "string") {
+      try {
+        body[field] = JSON.parse(body[field]);
+      } catch (e) {
+        // Leave as string; Zod will catch the invalid format
+      }
+    }
+  }
+  return body;
+};
+
+const admissionDocumentInputSchema = z.object({
   documentType: z.enum([
     "ADMISSION_FORM",
     "PHOTO",
@@ -37,10 +57,6 @@ const admissionDocumentSchema = z.object({
     "OTHER_DOCUMENT",
   ]),
   title: z.string().optional(),
-  fileUrl: z.string().url("Invalid file URL"),
-  fileName: z.string().min(1, "File name required"),
-  mimeType: z.string().optional(),
-  fileSizeBytes: z.number().int().nonnegative().optional(),
 });
 
 const admissionSchema = z
@@ -71,9 +87,13 @@ const admissionSchema = z
     totalMarksObtainedInPrevClass: z.number().optional(),
     fullMarksInPrevClass: z.number().optional(),
 
-    admissionForClass: z.string().min(1, "Admission class required").optional(),
-    requestedClassroomId: z.number().int().positive().optional(),
-    requestedStreamId: z.number().int().positive().optional(),
+    admissionForClass: z.string().min(1, "Admission class required"),
+    requestedForStream: z
+      .string()
+      .min(1, "Admission Stream required")
+      .optional(),
+    requestedClassroomId: z.number().int().positive().nullish(),
+    requestedStreamId: z.number().int().positive().nullish(),
 
     parents: z
       .array(
@@ -82,7 +102,7 @@ const admissionSchema = z
           name: z.string().min(1, "Parent/guardian name required"),
           email: z.string().email().optional(),
           phone: z.string().optional(),
-          address: z.string().optional(),
+          address: z.string().nullish(),
           isPrimary: z.boolean().optional(),
         }),
       )
@@ -96,11 +116,7 @@ const admissionSchema = z
     admissionReceiptNo: z.string().optional(),
     admissionReceiptLink: z.string().url().optional(),
 
-    documents: z
-      .array(admissionDocumentSchema)
-      .max(10, "Maximum 10 documents allowed")
-      .optional()
-      .default([]),
+    documents: z.array(admissionDocumentInputSchema).optional().default([]),
 
     schoolId: z.number().int().positive("School ID required"),
 
@@ -118,6 +134,8 @@ export const createAdmission = async (req, res) => {
   try {
     console.log("📥 Admission request received");
 
+    parseJSONFields(req.body);
+
     // Normalize multipart body (JSON strings → objects)
     const normalizedBody = {
       ...req.body,
@@ -134,21 +152,19 @@ export const createAdmission = async (req, res) => {
       monthlyFees: req.body.monthlyFees
         ? Number(req.body.monthlyFees)
         : undefined,
-
-      currentAddress: req.body.currentAddress
-        ? JSON.parse(req.body.currentAddress)
-        : undefined,
-      permanentAddress: req.body.permanentAddress
-        ? JSON.parse(req.body.permanentAddress)
-        : undefined,
-      parents: req.body.parents ? JSON.parse(req.body.parents) : undefined,
-      electiveSubjects: req.body.electiveSubjects
-        ? JSON.parse(req.body.electiveSubjects)
-        : undefined,
+      admissionForClass:
+        typeof req.body.admissionForClass === "string"
+          ? req.body.admissionForClass.trim()
+          : req.body.admissionForClass,
+      requestedForStream:
+        typeof req.body.requestedForStream === "string"
+          ? req.body.requestedForStream.trim()
+          : req.body.requestedForStream,
     };
 
     const data = admissionSchema.parse(normalizedBody);
     const files = req.files || [];
+    const documentsMeta = data.documents;
 
     console.log("📂 Files received:", files.length);
 
@@ -220,6 +236,7 @@ export const createAdmission = async (req, res) => {
           totalMarksObtainedInPrevClass: data.totalMarksObtainedInPrevClass,
           fullMarksInPrevClass: data.fullMarksInPrevClass,
           admissionForClass: data.admissionForClass,
+          requestedForStream: data.requestedForStream,
           requestedClassroomId: data.requestedClassroomId,
           requestedStreamId: data.requestedStreamId,
           parents: data.parents || null,
@@ -249,18 +266,14 @@ export const createAdmission = async (req, res) => {
 
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
+          const meta = documentsMeta[i] || {};
           console.log(`  → ${file.originalname}`);
 
           const formData = new FormData();
-
-          // Correct way: use buffer + filename + type
           const fileBlob = new Blob([file.buffer], { type: file.mimetype });
           formData.append("file", fileBlob, file.originalname);
-
-          // Per-file metadata (from multipart body)
-          const docType =
-            req.body[`documents[${i}][documentType]`] || "OTHER_DOCUMENT";
-          const title = req.body[`documents[${i}][title]`] || file.originalname;
+          const docType = meta.documentType || "OTHER_DOCUMENT";
+          const title = meta.title || file.originalname;
 
           formData.append("document_type", docType);
           formData.append("title", title);
@@ -268,6 +281,8 @@ export const createAdmission = async (req, res) => {
             "admission_request_id",
             createdAdmission.id.toString(),
           );
+          formData.append("mimeType", file.mimetype);
+          formData.append("fileSizeBytes", file.size.toString());
 
           // Public create – no auth header
           const pbRecord = await pb
@@ -286,7 +301,6 @@ export const createAdmission = async (req, res) => {
             mimeType: file.mimetype,
             fileSizeBytes: file.size,
             uploadedById: null,
-            pocketbaseRecordId: pbRecord.id,
           });
         }
 
@@ -475,6 +489,7 @@ export const updateAdmission = async (req, res) => {
       totalMarksObtainedInPrevClass: updates.totalMarksObtainedInPrevClass,
       fullMarksInPrevClass: updates.fullMarksInPrevClass,
       admissionForClass: updates.admissionForClass,
+      requestedForStream: updates.requestedForStream,
       requestedClassroomId: updates.requestedClassroomId,
       requestedStreamId: updates.requestedStreamId,
       parents: updates.parents ?? undefined,
@@ -552,6 +567,15 @@ export const approveAdmission = async (req, res) => {
   const { classroomId, streamId, academicYearId, rollNo } = req.body;
 
   try {
+    if (!academicYearId) {
+      return sendError(
+        res,
+        400,
+        "academicYearId is required",
+        "MISSING_ACADEMIC_YEAR",
+      );
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRequest.findUnique({
         where: { id: Number(id) },
@@ -559,10 +583,16 @@ export const approveAdmission = async (req, res) => {
           currentAddress: true,
           permanentAddress: true,
           documents: true,
+          school: { select: { id: true } },
         },
       });
 
       if (!admission) throw new Error("NOT_FOUND");
+
+      if (req.user.schoolId && req.user.schoolId !== admission.schoolId) {
+        throw new Error("FORBIDDEN");
+      }
+
       if (!["PENDING", "UNDER_REVIEW"].includes(admission.status)) {
         throw new Error("ALREADY_PROCESSED");
       }
@@ -580,6 +610,14 @@ export const approveAdmission = async (req, res) => {
           },
         });
       } else {
+        const formattedParents = (admission.parents || []).map((parent) => ({
+          name: parent.name,
+          type: parent.type, // map type → relation
+          phone: parent.phone,
+          email: parent.email,
+          isPrimary: parent.isPrimary,
+        }));
+
         // Create student WITHOUT classroom/stream first
         const studentData = {
           name: admission.name,
@@ -596,7 +634,7 @@ export const approveAdmission = async (req, res) => {
           permanentAddress: admission.permanentAddress
             ? { create: { ...admission.permanentAddress, id: undefined } }
             : undefined,
-          parents: admission.parents || [],
+          parents: formattedParents,
         };
 
         const created = await createStudentService(
@@ -605,10 +643,6 @@ export const approveAdmission = async (req, res) => {
           req.user.id,
         );
         student = created.student;
-
-        // NOW enroll (create studentStream)
-        const ayId = academicYearId || admission.academicYearId;
-        if (!ayId) throw new Error("No academic year provided");
 
         const finalClassroomId = classroomId || admission.requestedClassroomId;
         const finalStreamId = streamId || admission.requestedStreamId;
@@ -621,7 +655,7 @@ export const approveAdmission = async (req, res) => {
         const existingEnroll = await tx.studentStream.findUnique({
           where: {
             academicYearId_studentId: {
-              academicYearId: ayId,
+              academicYearId: Number(academicYearId),
               studentId: student.id,
             },
           },
@@ -634,7 +668,7 @@ export const approveAdmission = async (req, res) => {
         await tx.studentStream.create({
           data: {
             studentId: student.id,
-            academicYearId: ayId,
+            academicYearId: Number(academicYearId),
             classroomId: Number(finalClassroomId),
             streamId: finalStreamId ? Number(finalStreamId) : null,
             rollNo: rollNo || null,
@@ -642,9 +676,14 @@ export const approveAdmission = async (req, res) => {
         });
 
         // Update student's direct classroom reference
-        await tx.student.update({
+        student = await tx.student.update({
           where: { id: student.id },
           data: { classroomId: Number(finalClassroomId) },
+          include: {
+            currentAddress: true,
+            permanentAddress: true,
+            parents: true, // include parents in the response
+          },
         });
       }
 
