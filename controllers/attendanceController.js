@@ -330,7 +330,7 @@ export const markBulkStudentAttendance = async (req, res) => {
 
     if (validRecords.length === 0) {
       return sendError(res, 400, "No valid attendance records to process", {
-        errors,
+        error,
       });
     }
 
