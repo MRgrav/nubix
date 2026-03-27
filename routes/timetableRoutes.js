@@ -25,11 +25,16 @@ router.post(
 );
 router.get(
   "/student",
-  authorize("STUDENT", "PARENT"),
+  // authorize("STUDENT", "PARENT"),
   authenticate,
   getMyStudentTimetable,
 );
-router.get("/teacher", authorize("STAFF"), authenticate, getMyTeacherSlots);
+router.get(
+  "/teacher",
+  // authorize("STAFF"),
+  authenticate,
+  getMyTeacherSlots,
+);
 
 router.put(
   "/slots/:id",
