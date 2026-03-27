@@ -1,40 +1,100 @@
+//
 import prisma from "../models/prisma.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { resolveAcademicYearId } from "../utils/resolveAcademicYear.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
+import pb, { ensurePBAuth } from "../utils/pocketbase.js";
+import z from "zod";
+
+const parseJSONFields = (body) => {
+  const fields = ["documents", "documentsMeta"];
+  for (const field of fields) {
+    if (typeof body[field] === "string") {
+      try {
+        body[field] = JSON.parse(body[field]);
+      } catch (e) {
+        // leave as string; Zod will catch invalid format
+      }
+    }
+  }
+  return body;
+};
+
+const announcementDocumentInputSchema = z.object({
+  id: z.number().int().positive().optional(),
+  documentType: z.enum(["NOTICE", "EVENT", "ATTACHMENT"]).optional(),
+  title: z.string().optional(),
+  _delete: z.boolean().optional().default(false),
+});
+
+// Add media to the schema
+const announcementCreateSchema = z.object({
+  type: z.enum(["NOTICE", "EVENT"]),
+  title: z.string().min(3, "Title must be at least 3 characters"),
+  description: z.string().optional(),
+  link: z.string().url().optional(),
+  classroomId: z.coerce.number().int().positive().optional(),
+  streamId: z.coerce.number().int().positive().optional(),
+  schoolId: z.coerce.number().int().positive(),
+  academicYearId: z.coerce.number().int().positive().optional(),
+});
+
+const announcementUpdateSchema = z.object({
+  title: z.string().min(3, "Title must be at least 3 characters").optional(),
+  description: z.string().optional(),
+  link: z.string().url().optional(),
+  classroomId: z.coerce.number().int().positive().optional(),
+  streamId: z.coerce.number().int().positive().optional(),
+  academicYearId: z.coerce.number().int().positive().optional(),
+  documents: z.array(announcementDocumentInputSchema).optional(),
+});
 
 export const createAnnouncement = async (req, res) => {
-  const {
-    type,
-    title,
-    description,
-    link,
-    media,
-    classroomId,
-    streamId,
-    schoolId,
-    academicYearId,
-  } = req.body;
-
-  if (!req.user?.id) {
-    return sendError(
-      res,
-      401,
-      "Invalid authentication context",
-      "UNAUTHORIZED",
-    );
-  }
-
-  if (!schoolId || !title || !type) {
-    return sendError(
-      res,
-      400,
-      "schoolId, title, and type are required",
-      "VALIDATION_ERROR",
-    );
-  }
-
   try {
+    if (!req.user?.id) {
+      return sendError(
+        res,
+        401,
+        "Invalid authentication context",
+        "UNAUTHORIZED",
+      );
+    }
+
+    // Parse JSON fields (documents) from multipart/form-data
+    parseJSONFields(req.body);
+
+    if (req.body.documentsMeta && !req.body.documents) {
+      req.body.documents = req.body.documentsMeta;
+    }
+
+    // Validate body
+    const data = announcementCreateSchema.parse(req.body);
+    const {
+      type,
+      title,
+      description,
+      link,
+      classroomId,
+      streamId,
+      schoolId,
+      academicYearId,
+    } = data;
+
+    const lowerType = type.toLowerCase();
+
+    const files = req.files || [];
+    const metadata = req.body.documents || [];
+
+    if (metadata.length !== files.length) {
+      return sendError(
+        res,
+        400,
+        `Expected ${metadata.length} document metadata entries but got ${files.length} files`,
+        "FILE_METADATA_MISMATCH",
+      );
+    }
+
+    // Resolve academic year
     let resolvedAcademicYearId;
     try {
       resolvedAcademicYearId = await resolveAcademicYearId({
@@ -45,18 +105,13 @@ export const createAnnouncement = async (req, res) => {
       return sendError(res, 400, err.message, "ACADEMIC_YEAR_ERROR");
     }
 
-    // Validate classroom belongs to school (if provided)
+    // Validate classroom (if provided)
     let classroom;
-
     if (classroomId) {
       classroom = await prisma.classroom.findUnique({
-        where: { id: Number(classroomId) },
-        select: {
-          schoolId: true,
-          name: true, // used to detect class 11 / 12
-        },
+        where: { id: classroomId },
+        select: { schoolId: true, name: true },
       });
-
       if (!classroom || classroom.schoolId !== Number(schoolId)) {
         return sendError(
           res,
@@ -65,16 +120,12 @@ export const createAnnouncement = async (req, res) => {
           "VALIDATION_ERROR",
         );
       }
-
-      // ✅ Stream allowed ONLY for Class 11 & 12
       const className = classroom.name.toString().toLowerCase();
-
       const isClass11Or12 =
         className === "11" ||
         className === "12" ||
         className.includes("11") ||
         className.includes("12");
-
       if (!isClass11Or12 && streamId) {
         return sendError(
           res,
@@ -85,42 +136,82 @@ export const createAnnouncement = async (req, res) => {
       }
     }
 
+    // Validate stream (if provided)
     if (streamId) {
       const streamExists = await prisma.stream.findUnique({
-        where: { id: Number(streamId) },
-        select: { id: true },
+        where: { id: streamId },
       });
-      if (!streamExists) {
+      if (!streamExists)
         return sendError(res, 404, "Stream not found", "NOT_FOUND");
-      }
     }
 
-    const announcement = await prisma.announcement.create({
-      data: {
-        type,
-        title: title.trim(),
-        description: description?.trim(),
-        link: link?.trim(),
-        media: media?.trim(),
-        classroom: classroomId
-          ? { connect: { id: Number(classroomId) } }
-          : undefined,
-        stream: streamId ? { connect: { id: Number(streamId) } } : undefined,
-        school: { connect: { id: Number(schoolId) } },
-        createdBy: { connect: { id: req.user.id } },
-        createdByRole: req.user.role,
-        academicYear: { connect: { id: Number(resolvedAcademicYearId) } },
-      },
-      include: {
-        academicYear: { select: { id: true, label: true } },
-        stream: streamId ? { select: { id: true, name: true } } : undefined,
-        classroom: classroomId
-          ? { select: { id: true, name: true, section: true } }
-          : undefined,
-        createdBy: {
-          select: { id: true, email: true, role: true },
+    // Create announcement and documents in transaction
+    const announcement = await prisma.$transaction(async (tx) => {
+      const newAnnouncement = await tx.announcement.create({
+        data: {
+          type: lowerType,
+          title: title.trim(),
+          description: description?.trim(),
+          link: link?.trim(),
+          classroom: classroomId ? { connect: { id: classroomId } } : undefined,
+          stream: streamId ? { connect: { id: streamId } } : undefined,
+          school: { connect: { id: schoolId } },
+          createdBy: { connect: { id: req.user.id } },
+          createdByRole: req.user.role,
+          academicYear: { connect: { id: resolvedAcademicYearId } },
         },
-      },
+      });
+
+      // Upload files
+      if (files.length > 0) {
+        await ensurePBAuth();
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const meta = metadata[i] || {};
+
+          const formData = new FormData();
+          const blob = new Blob([file.buffer], { type: file.mimetype });
+          formData.append("file", blob, file.originalname);
+          formData.append("announcementId", newAnnouncement.id.toString());
+          formData.append("documentType", meta.documentType || "ATTACHMENT");
+          formData.append("title", meta.title || file.originalname);
+          formData.append("uploadedById", req.user.id.toString());
+          formData.append("mimeType", file.mimetype);
+          formData.append("fileSizeBytes", file.size.toString());
+
+          const pbRecord = await pb
+            .collection("announcement_documents")
+            .create(formData);
+
+          await tx.announcementDocument.create({
+            data: {
+              announcementId: newAnnouncement.id,
+              documentType: meta.documentType || "ATTACHMENT",
+              title: meta.title || file.originalname,
+              fileUrl: `${process.env.POCKETBASE_URL}/api/files/announcement_documents/${pbRecord.id}/${pbRecord.file}`,
+              pocketbaseRecordId: pbRecord.id,
+              mimeType: file.mimetype,
+              fileSizeBytes: file.size,
+              uploadedById: req.user.id,
+            },
+          });
+        }
+      }
+
+      // Return full announcement with relations
+      return await tx.announcement.findUnique({
+        where: { id: newAnnouncement.id },
+        include: {
+          academicYear: { select: { id: true, label: true } },
+          stream: streamId ? { select: { id: true, name: true } } : undefined,
+          classroom: classroomId
+            ? { select: { id: true, name: true, section: true } }
+            : undefined,
+          createdBy: { select: { id: true, email: true, role: true } },
+          documents: true,
+        },
+      });
     });
 
     return sendSuccess(
@@ -131,6 +222,14 @@ export const createAnnouncement = async (req, res) => {
     );
   } catch (err) {
     console.error("Create announcement error:", err);
+    if (err instanceof z.ZodError) {
+      return sendError(
+        res,
+        400,
+        err.errors.map((e) => e.message).join(", "),
+        "VALIDATION_ERROR",
+      );
+    }
     if (err.code === "P2025") {
       return sendError(
         res,
@@ -152,7 +251,7 @@ export const getAnnouncements = async (req, res) => {
   const {
     schoolId,
     type,
-    classroomId, // ← new: filter by classroom ID
+    classroomId,
     streamId,
     academicYearId,
     page = 1,
@@ -180,7 +279,7 @@ export const getAnnouncements = async (req, res) => {
       isSuspended: false,
     };
 
-    if (type) where.type = type;
+    if (type) where.type = type.toLowerCase();
     if (classroomId) where.classroomId = Number(classroomId);
     if (streamId) where.streamId = Number(streamId);
 
@@ -210,7 +309,6 @@ export const getAnnouncements = async (req, res) => {
           title: true,
           description: true,
           link: true,
-          media: true,
           isSuspended: true,
           createdAt: true,
           classroom: {
@@ -224,6 +322,7 @@ export const getAnnouncements = async (req, res) => {
               staff: { select: { name: true } },
             },
           },
+          documents: true,
         },
         orderBy: { createdAt: "desc" },
       }),
@@ -410,7 +509,7 @@ export const getMyAnnouncements = async (req, res) => {
       ],
     };
 
-    if (type) where.type = type;
+    if (type) where.type = type.toLowerCase();
 
     const pageNum = Math.max(1, Number(page));
     const limitNum = Math.min(100, Math.max(1, Number(limit)));
@@ -428,7 +527,6 @@ export const getMyAnnouncements = async (req, res) => {
           title: true,
           description: true,
           link: true,
-          media: true,
           isSuspended: true,
           createdAt: true,
           classroom: {
@@ -442,6 +540,7 @@ export const getMyAnnouncements = async (req, res) => {
               staff: { select: { name: true } },
             },
           },
+          documents: true,
         },
         orderBy: { createdAt: "desc" },
       }),
@@ -512,7 +611,7 @@ export const getUniversalAnnouncements = async (req, res) => {
       streamId: null,
     };
 
-    if (type) where.type = type;
+    if (type) where.type = type.toLowerCase();
 
     const pageNum = Math.max(1, Number(page));
     const limitNum = Math.min(100, Math.max(1, Number(limit)));
@@ -530,7 +629,6 @@ export const getUniversalAnnouncements = async (req, res) => {
           title: true,
           description: true,
           link: true,
-          media: true,
           isSuspended: true,
           createdAt: true,
           classroom: {
@@ -544,6 +642,7 @@ export const getUniversalAnnouncements = async (req, res) => {
               staff: { select: { name: true } },
             },
           },
+          documents: true,
         },
         orderBy: { createdAt: "desc" },
       }),
@@ -586,52 +685,169 @@ export const getAnnouncement = async (req, res) => {
 // UPDATE Announ
 
 export const updateAnnouncement = async (req, res) => {
-  const {
-    title,
-    description,
-    link,
-    media,
-    classroomId,
-    streamId,
-    academicYearId,
-  } = req.body;
-
   try {
-    const data = {};
-    if (title) data.title = title.trim();
-    if (description !== undefined) data.description = description?.trim();
-    if (link !== undefined) data.link = link?.trim();
-    if (media !== undefined) data.media = media?.trim();
+    // 1. Parse JSON fields (documents)
+    parseJSONFields(req.body);
+
+    // 2. Validate the update data
+    const data = announcementUpdateSchema.parse(req.body);
+    const {
+      title,
+      description,
+      link,
+      classroomId,
+      streamId,
+      academicYearId,
+      documents = [],
+    } = data;
+    const files = req.files || [];
+
+    // 3. Prepare update data for the announcement itself
+    const updateData = {};
+    if (title) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description?.trim();
+    if (link !== undefined) updateData.link = link?.trim();
 
     if (classroomId !== undefined) {
-      data.classroom = classroomId
-        ? { connect: { id: Number(classroomId) } }
+      updateData.classroom = classroomId
+        ? { connect: { id: classroomId } }
         : { disconnect: true };
     }
-
     if (streamId !== undefined) {
-      data.stream = streamId
-        ? { connect: { id: Number(streamId) } }
+      updateData.stream = streamId
+        ? { connect: { id: streamId } }
         : { disconnect: true };
     }
-
     if (academicYearId) {
-      data.academicYear = { connect: { id: Number(academicYearId) } };
+      updateData.academicYear = { connect: { id: academicYearId } };
     }
 
-    const updated = await prisma.announcement.update({
-      where: { id: req.announcement.id },
-      data,
-      include: {
-        academicYear: { select: { id: true, label: true } },
-        stream: { select: { id: true, name: true } },
-        classroom: { select: { id: true, name: true, section: true } },
-      },
+    // 4. Run the update transaction
+    const updatedAnnouncement = await prisma.$transaction(async (tx) => {
+      // a) Update the announcement record
+      const announcement = await tx.announcement.update({
+        where: { id: req.announcement.id },
+        data: updateData,
+      });
+
+      // b) Process deletions (documents with _delete: true)
+      const docsToDelete = documents.filter((doc) => doc._delete && doc.id);
+      if (docsToDelete.length) {
+        await tx.announcementDocument.deleteMany({
+          where: {
+            id: { in: docsToDelete.map((d) => d.id) },
+            announcementId: announcement.id,
+          },
+        });
+      }
+
+      // c) Process files (they correspond 1:1 with documents metadata, in order)
+      if (files.length) {
+        // Ensure metadata count matches file count
+        if (documents.length !== files.length) {
+          throw new Error(
+            `Metadata count (${documents.length}) does not match file count (${files.length})`,
+          );
+        }
+
+        await ensurePBAuth();
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const meta = documents[i];
+
+          if (!meta) {
+            throw new Error(`Missing metadata for file at index ${i}`);
+          }
+
+          // Build PocketBase form data
+          const formData = new FormData();
+          const blob = new Blob([file.buffer], { type: file.mimetype });
+          formData.append("file", blob, file.originalname);
+          formData.append("announcementId", announcement.id.toString());
+          formData.append("documentType", meta.documentType || "ATTACHMENT");
+          formData.append("title", meta.title || file.originalname);
+          formData.append("uploadedById", req.user.id.toString());
+          formData.append("mimeType", file.mimetype);
+          formData.append("fileSizeBytes", file.size.toString());
+
+          if (meta.id) {
+            // Update existing document
+            const existingDoc = await tx.announcementDocument.findUnique({
+              where: { id: meta.id },
+              select: { pocketbaseRecordId: true },
+            });
+            if (!existingDoc?.pocketbaseRecordId) {
+              throw new Error(`Document ${meta.id} not found`);
+            }
+
+            const pbRecord = await pb
+              .collection("announcement_documents")
+              .update(existingDoc.pocketbaseRecordId, formData);
+
+            await tx.announcementDocument.update({
+              where: { id: meta.id },
+              data: {
+                documentType: meta.documentType || "ATTACHMENT",
+                title: meta.title || file.originalname,
+                fileUrl: `${process.env.POCKETBASE_URL}/api/files/announcement_documents/${pbRecord.id}/${pbRecord.file}`,
+                mimeType: file.mimetype,
+                fileSizeBytes: file.size,
+                uploadedById: req.user.id,
+                updatedAt: new Date(),
+              },
+            });
+          } else {
+            // Create new document
+            const pbRecord = await pb
+              .collection("announcement_documents")
+              .create(formData);
+
+            await tx.announcementDocument.create({
+              data: {
+                announcementId: announcement.id,
+                documentType: meta.documentType || "ATTACHMENT",
+                title: meta.title || file.originalname,
+                fileUrl: `${process.env.POCKETBASE_URL}/api/files/announcement_documents/${pbRecord.id}/${pbRecord.file}`,
+                pocketbaseRecordId: pbRecord.id,
+                mimeType: file.mimetype,
+                fileSizeBytes: file.size,
+                uploadedById: req.user.id,
+              },
+            });
+          }
+        }
+      }
+
+      // d) Return the updated announcement with all relations
+      return await tx.announcement.findUnique({
+        where: { id: announcement.id },
+        include: {
+          academicYear: { select: { id: true, label: true } },
+          stream: { select: { id: true, name: true } },
+          classroom: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, email: true, role: true } },
+          documents: true,
+        },
+      });
     });
 
-    return sendSuccess(res, 200, updated, "Announcement updated successfully");
+    return sendSuccess(
+      res,
+      200,
+      updatedAnnouncement,
+      "Announcement updated successfully",
+    );
   } catch (err) {
     console.error("Update announcement error:", err);
+    if (err instanceof z.ZodError && Array.isArray(err.errors)) {
+      return sendError(
+        res,
+        400,
+        err.errors.map((e) => e.message).join(", "),
+        "VALIDATION_ERROR",
+      );
+    }
     if (err.code === "P2025") {
       return sendError(res, 404, "Announcement not found", "NOT_FOUND");
     }

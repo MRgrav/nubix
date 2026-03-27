@@ -13,7 +13,7 @@ import {
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import { announcementPermission } from "../middlewares/announcementPermission.js";
 import { loadAnnouncement } from "../middlewares/loadAnnouncement.js";
-
+import { uploadAnnouncementDoc } from "../middlewares/upload.js";
 const router = express.Router();
 
 router.use(authenticate);
@@ -31,10 +31,16 @@ router.get(
 );
 router.get("/:id", loadAnnouncement, getAnnouncement);
 
-router.post("/", announcementPermission, createAnnouncement);
+router.post(
+  "/",
+  uploadAnnouncementDoc,
+  announcementPermission,
+  createAnnouncement,
+);
 router.put(
   "/:id",
   loadAnnouncement,
+  uploadAnnouncementDoc,
   announcementPermission,
   updateAnnouncement,
 );
