@@ -39,10 +39,6 @@ const schoolDocumentMetadataSchema = z.object({
   id: z.number().int().optional(),
 });
 
-// const schoolDocumentUpdateMetadataSchema = schoolDocumentMetadataSchema.extend({
-//   id: z.number().int().optional(),
-// });
-
 const createSchoolSchema = z.object({
   name: z.string().min(3, "School name must be at least 3 characters"),
   schoolCode: z
@@ -50,6 +46,9 @@ const createSchoolSchema = z.object({
     .trim()
     .length(5, "School code must be exactly 5 characters")
     .regex(/^\d{5}$/, "School code must be exactly 5 digits (00000-99999)"),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  geoRadiusMeters: z.number().int().min(10).max(500).optional(),
   address: schoolAddressSchema.optional(),
   documents: z.array(schoolDocumentMetadataSchema).optional(),
 });
@@ -59,6 +58,9 @@ const updateSchoolSchema = z.object({
     .string()
     .min(3, "School name must be at least 3 characters")
     .optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  geoRadiusMeters: z.number().int().min(10).max(500).optional(),
   address: schoolAddressSchema.optional(),
   documents: z.array(schoolDocumentMetadataSchema).optional(),
 });
@@ -68,7 +70,15 @@ export const createSchool = async (req, res) => {
     parseJSONFields(req.body);
 
     const validated = createSchoolSchema.parse(req.body);
-    const { name, schoolCode, address, documents } = validated;
+    const {
+      name,
+      schoolCode,
+      latitude,
+      longitude,
+      geoRadiusMeters,
+      address,
+      documents,
+    } = validated;
 
     const normalizedCode = schoolCode?.trim();
     const normalizedName = name?.trim();
@@ -279,7 +289,14 @@ export const updateSchool = async (req, res) => {
 
     // Validate with Zod
     const validated = updateSchoolSchema.parse(req.body);
-    const { name, address, documents = [] } = validated;
+    const {
+      name,
+      latitude,
+      longitude,
+      geoRadiusMeters,
+      address,
+      documents = [],
+    } = validated;
     const files = req.files || [];
 
     // 1. Ensure the number of file uploads matches the metadata count
@@ -307,6 +324,10 @@ export const updateSchool = async (req, res) => {
     const updatedSchool = await prisma.$transaction(async (tx) => {
       const updateData = {};
       if (name) updateData.name = name.trim();
+      if (latitude !== undefined) updateData.latitude = latitude;
+      if (longitude !== undefined) updateData.longitude = longitude;
+      if (geoRadiusMeters !== undefined)
+        updateData.geoRadiusMeters = geoRadiusMeters;
 
       // Handle address (upsert)
       if (address) {
