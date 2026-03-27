@@ -25,7 +25,7 @@ router.post(
 );
 router.get(
   "/student",
-  authorize("STUDENT", "PARENTS"),
+  authorize("STUDENT", "PARENT"),
   authenticate,
   getMyStudentTimetable,
 );
