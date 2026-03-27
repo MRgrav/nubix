@@ -42,6 +42,7 @@ model AcademicYear {
   BoardVersion           BoardVersion[]
   ExamConfig             ExamConfig[]
   gradingSchemes         GradingScheme[]
+  StaffAttendance        StaffAttendance[]
 
   @@index([isActive])
   @@index([startDate, endDate])
@@ -100,6 +101,10 @@ model School {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   rollNoFormat String?
+
+  latitude        Float?
+  longitude       Float?
+  geoRadiusMeters Int?   @default(50)
 
   users              User[]
   students           Student[]
@@ -295,10 +300,39 @@ model Staff {
   emergencyContacts  StaffEmergencyContact[]
   qualifications     StaffQualification[]
 
-  createdById Int?
-  updatedById Int?
-  createdBy   User? @relation("CreatedStaff", fields: [createdById], references: [id])
-  updatedBy   User? @relation("UpdatedStaff", fields: [updatedById], references: [id])
+  createdById     Int?
+  updatedById     Int?
+  createdBy       User?             @relation("CreatedStaff", fields: [createdById], references: [id])
+  updatedBy       User?             @relation("UpdatedStaff", fields: [updatedById], references: [id])
+  StaffAttendance StaffAttendance[]
+}
+
+model StaffAttendance {
+  id      Int   @id @default(autoincrement())
+  staffId Int
+  staff   Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  attendanceDate DateTime?
+  dateOnly       DateTime  @db.Date
+  timeOnly       String?
+  status         String    @default("PRESENT")
+
+  latitude  Float? // Teacher's location when marking
+  longitude Float?
+
+  distanceMeters Float? // Calculated distance (for auditing)
+  isWithinRange  Boolean @default(false)
+
+  note           String?
+  academicYearId Int?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, dateOnly])
+  @@index([dateOnly])
+  @@index([staffId, dateOnly])
 }
 
 enum EmployeeStatus {

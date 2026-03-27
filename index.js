@@ -26,6 +26,7 @@ import parentsRoutes from "./routes/parentRoutes.js";
 import admissionRoutes from "./routes/admissionRoutes.js";
 import examBoardRouter from "./routes/examBoardRouter.js";
 import publicRouter from "./routes/publicRoutes.js";
+import staffAttendanceRouter from "./routes/staffAttendanceRoutes.js";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -61,6 +62,7 @@ app.use("/api/fees", feeRoutes);
 app.use("/api/parents", parentsRoutes);
 app.use("/api/admissions", admissionRoutes);
 app.use("/api/boards", examBoardRouter);
+app.use("/api/attend/staff", staffAttendanceRouter);
 app.use("/api/public", publicRouter);
 
 // Swagger route
