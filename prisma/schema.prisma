@@ -421,9 +421,10 @@ model User {
   createdStaff Staff[] @relation("CreatedStaff")
   updatedStaff Staff[] @relation("UpdatedStaff")
 
-  uploadedStaffDocuments StaffDocument[]     @relation("UploadedStaffDocuments")
-  uploadedDocuments      AdmissionDocument[] @relation("UploadedDocuments")
-  uploadedSchoolDocs     SchoolDocument[]    @relation("UploadedSchoolDocuments")
+  uploadedStaffDocuments StaffDocument[]        @relation("UploadedStaffDocuments")
+  uploadedDocuments      AdmissionDocument[]    @relation("UploadedDocuments")
+  uploadedSchoolDocs     SchoolDocument[]       @relation("UploadedSchoolDocuments")
+  uploadedAnnouncements  AnnouncementDocument[] @relation("UploadedAnnouncementDocuments")
 }
 
 model Attendance {
@@ -615,8 +616,7 @@ model Announcement {
   title       String
   description String
 
-  link  String?
-  media String?
+  link String?
 
   classroomId Int?
   classroom   Classroom? @relation("ClassroomAnnouncements", fields: [classroomId], references: [id])
@@ -640,10 +640,34 @@ model Announcement {
   academicYearId Int?
   academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
 
+  documents AnnouncementDocument[]
+
   @@index([schoolId])
   @@index([schoolId, type])
   @@index([schoolId, isSuspended])
   @@index([classroomId])
+}
+
+model AnnouncementDocument {
+  id             Int          @id @default(autoincrement())
+  announcementId Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  documentType       String
+  title              String?
+  fileUrl            String
+  pocketbaseRecordId String?
+  mimeType           String?
+  fileSizeBytes      Int?
+
+  uploadedById Int?
+  uploadedBy   User? @relation("UploadedAnnouncementDocuments", fields: [uploadedById], references: [id])
+
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([announcementId])
+  @@index([documentType])
 }
 
 // PTM Schemas

@@ -110,8 +110,6 @@ export const markStudentAttendance = async (req, res) => {
       );
     }
 
-    console.log(`Attendance authorized via ${auth.source}`);
-
     // ⭐ UPSERT INSERT
     const attendance = await upsertAttendance(
       {
