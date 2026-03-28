@@ -395,3 +395,74 @@ export const canTeacherEnterMarks = async (teacherId, examinationId) => {
 
   return !!assignment;
 };
+
+export const getMyTeacherAssignments = async (req, res) => {
+  try {
+    // 1. Ensure user is a staff member
+    if (req.user.role !== "STAFF") {
+      return sendError(
+        res,
+        403,
+        "Only staff can view their assignments",
+        "FORBIDDEN",
+      );
+    }
+
+    // 2. Find the staff record linked to this user
+    const staff = await prisma.staff.findUnique({
+      where: { userId: req.user.id },
+      select: { id: true },
+    });
+    if (!staff) {
+      return sendError(res, 404, "Staff profile not found", "NOT_FOUND");
+    }
+
+    // 3. Parse query parameters
+    const { academicYearId, status = "ACTIVE" } = req.query;
+
+    // 4. Resolve academic year (if not provided, use active year)
+    let resolvedAcademicYearId = academicYearId
+      ? parseInt(academicYearId)
+      : (await getActiveAcademicYear())?.id;
+    if (!resolvedAcademicYearId) {
+      return sendError(
+        res,
+        400,
+        "No active academic year found",
+        "ACADEMIC_YEAR_ERROR",
+      );
+    }
+
+    // 5. Build where clause
+    const where = {
+      teacherId: staff.id,
+      academicYearId: resolvedAcademicYearId,
+    };
+    if (status) where.status = status;
+
+    // 6. Fetch assignments
+    const assignments = await prisma.teacherAssignment.findMany({
+      where,
+      include: {
+        subject: { select: { id: true, name: true, code: true } },
+        classroom: { select: { id: true, name: true, section: true } },
+        stream: { select: { id: true, name: true } },
+        academicYear: { select: { id: true, label: true } },
+      },
+      orderBy: {
+        classroom: { name: "asc" },
+      },
+    });
+
+    // 7. Return response
+    return sendSuccess(
+      res,
+      200,
+      assignments,
+      "Your teaching assignments fetched successfully",
+    );
+  } catch (err) {
+    console.error("Get my teacher assignments error:", err);
+    return sendError(res, 500, "Failed to fetch your assignments", err.message);
+  }
+};
