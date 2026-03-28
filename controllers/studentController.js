@@ -1023,6 +1023,7 @@ export const getTeachersForStudent = async (req, res) => {
           name: true,
           email: true,
           role: true,
+          userId:true
         },
       }),
     ]);

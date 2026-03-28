@@ -667,28 +667,62 @@ export const getClassTeachers = async (req, res) => {
 export const getClassSubjects = async (req, res) => {
   try {
     const { id } = req.params;
-    const { academicYear } = req.query;
+    const { academicYearId, streamId } = req.query;
+
+    const classroomId = parseInt(id, 10);
+    if (isNaN(classroomId)) {
+      return sendError(res, 400, "Invalid classroom ID");
+    }
+
+    // Resolve academic year (use provided ID, otherwise fallback to active)
+    let resolvedAcademicYearId = academicYearId
+      ? parseInt(academicYearId, 10)
+      : null;
+    if (!resolvedAcademicYearId) {
+      const activeYear = await getActiveAcademicYear(req.user?.schoolId);
+      if (!activeYear) {
+        return sendError(res, 400, "No active academic year found");
+      }
+      resolvedAcademicYearId = activeYear.id;
+    }
+
+    // Build where clause
     const where = {
-      classroomId: parseInt(id, 10),
-      ...(req.user?.schoolId ? { schoolId: req.user.schoolId } : {}),
-      ...(academicYear ? { academicYear } : {}),
+      classroomId,
+      academicYearId: resolvedAcademicYearId,
     };
-    const slots = await prisma.timetableSlot.findMany({
+    // Add stream filter if provided
+    if (streamId) {
+      const parsedStreamId = parseInt(streamId, 10);
+      if (!isNaN(parsedStreamId)) {
+        where.streamId = parsedStreamId;
+      } else {
+        return sendError(res, 400, "Invalid stream ID", "VALIDATION_ERROR");
+      }
+    }
+    // School filter (via classroom relation)
+    if (req.user?.schoolId) {
+      where.classroom = { schoolId: req.user.schoolId };
+    }
+
+    const curriculumSubjects = await prisma.curriculumSubject.findMany({
       where,
       include: {
         subject: { select: { id: true, name: true, code: true } },
       },
     });
-    const subjectsMap = new Map();
-    for (const s of slots) {
-      if (s.subject) {
-        subjectsMap.set(s.subject.id, s.subject);
-      }
-    }
-    res.json({ subjects: Array.from(subjectsMap.values()) });
+
+    const subjects = curriculumSubjects.map((cs) => cs.subject);
+
+    return sendSuccess(
+      res,
+      200,
+      subjects,
+      "Class subjects fetched successfully",
+    );
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch class subjects" });
+    console.error("Get class subjects error:", err);
+    return sendError(res, 500, "Failed to fetch class subjects");
   }
 };
 
@@ -711,9 +745,19 @@ export const getStudentsInClass = async (req, res) => {
   }
 
   const { classId } = req.params;
-  const { page = 1, limit = 60, search } = req.query;
+  const { page = 1, limit = 60, search, streamId } = req.query;
 
   try {
+    const activeYear = await getActiveAcademicYear();
+    if (!activeYear) {
+      return sendError(
+        res,
+        400,
+        "No active academic year found",
+        "ACADEMIC_YEAR_ERROR",
+      );
+    }
+
     console.log(
       "Checking assignment for teacherId:",
       req.user.id,
@@ -722,39 +766,65 @@ export const getStudentsInClass = async (req, res) => {
     );
 
     // Check if teacher is assigned to this class
-    const assignment = await prisma.teacherAssignment.findFirst({
-      where: {
-        teacherId: req.user.staff?.id,
-        classroomId: parseInt(classId),
-      },
-      include: {
-        subject: { select: { name: true } },
-        academicYear: { select: { label: true } },
-      },
-    });
+    if (req.user.role === "STAFF") {
+      // Get staff record (if not already attached)
+      let staffId = req.user.staff?.id;
+      if (!staffId) {
+        const staff = await prisma.staff.findUnique({
+          where: { userId: req.user.id },
+          select: { id: true },
+        });
+        if (!staff) {
+          return sendError(
+            res,
+            403,
+            "Your profile is not linked to a staff record",
+            "FORBIDDEN",
+          );
+        }
+        staffId = staff.id;
+      }
 
-    if (!assignment) {
-      console.log("No assignment found for this teacher and class");
-      return sendError(
-        res,
-        403,
-        "You are not assigned to this class",
-        "FORBIDDEN",
-      );
+      const assignment = await prisma.teacherAssignment.findFirst({
+        where: {
+          teacherId: staffId,
+          classroomId: parseInt(classId),
+          academicYearId: activeYear.id,
+          status: "ACTIVE",
+        },
+      });
+
+      if (!assignment) {
+        console.log("No assignment found for this teacher and class");
+        return sendError(
+          res,
+          403,
+          "You are not assigned to this class for the current academic year",
+          "FORBIDDEN",
+        );
+      }
     }
 
-    console.log("Assignment found:", {
-      id: assignment.id,
-      subject: assignment.subject?.name,
-      academicYear: assignment.academicYear?.label,
-      status: assignment.status,
-    });
-
     // Build query
+
     const where = { classroomId: parseInt(classId) };
     if (search?.trim()) {
       where.name = { contains: search.trim(), mode: "insensitive" };
       console.log("Search filter applied:", search.trim());
+    }
+
+    // If streamId is provided, we need to filter students enrolled in that stream for the active academic year
+    let studentWhere = where;
+    if (streamId) {
+      studentWhere = {
+        ...where,
+        studentStreams: {
+          some: {
+            streamId: parseInt(streamId),
+            academicYearId: activeYear.id,
+          },
+        },
+      };
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -763,9 +833,9 @@ export const getStudentsInClass = async (req, res) => {
     console.log("Query params:", { where, skip, take });
 
     const [total, students] = await prisma.$transaction([
-      prisma.student.count({ where }),
+      prisma.student.count({ where: studentWhere }),
       prisma.student.findMany({
-        where,
+        where: studentWhere,
         skip,
         take,
         orderBy: { name: "asc" },
@@ -773,27 +843,66 @@ export const getStudentsInClass = async (req, res) => {
           id: true,
           name: true,
           email: true,
-          user: {
+          user: { select: { id: true } },
+          studentStreams: {
+            where: { academicYearId: activeYear.id },
             select: {
-              id: true,
-              email: true,
+              rollNo: true,
+              stream: { select: { id: true, name: true } },
             },
           },
         },
       }),
     ]);
 
-    console.log("Found students count:", total);
-    console.log("Students data sample:", students.slice(0, 2)); // First 2 for debug
+    // Flatten student data and remove classroom repetition
+    const transformedStudents = students.map((student) => ({
+      id: student.id,
+      name: student.name,
+      email: student.email,
+      userId: student.user?.id,
+      rollNo: student.studentStreams[0]?.rollNo || null,
+      stream: student.studentStreams[0]?.stream || null,
+    }));
 
-    return sendSuccess(res, 200, students, "Students fetched successfully", {
+    // Get classroom details for meta (once)
+    const classroom = await prisma.classroom.findUnique({
+      where: { id: parseInt(classId) },
+      select: {
+        id: true,
+        name: true,
+        section: true,
+        isSubjectWiseAttendance: true,
+      },
+    });
+
+    // Build pagination meta
+    const meta = {
       total,
       pages: Math.ceil(total / take),
       currentPage: Number(page),
       perPage: take,
       hasNext: Number(page) < Math.ceil(total / take),
       hasPrev: Number(page) > 1,
-    });
+      classroom, // classroom details moved here
+    };
+
+    // If filtering by stream, include stream info in meta
+    if (streamId) {
+      const stream = await prisma.stream.findUnique({
+        where: { id: parseInt(streamId) },
+        select: { id: true, name: true },
+      });
+      if (stream) meta.stream = stream;
+    }
+
+    return sendSuccess(
+      res,
+      200,
+      transformedStudents,
+      "Students fetched successfully",
+      meta,
+    );
   } catch (err) {
     console.error("Get students in class error:", err);
     return sendError(res, 500, "Failed to fetch students", "INTERNAL_ERROR");
