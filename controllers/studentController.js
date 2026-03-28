@@ -123,7 +123,7 @@ export const createStudent = async (req, res) => {
       city,
       state,
       pincode,
-      address
+      address,
     } = validated;
 
     if (classroomId && streamId) {
@@ -794,9 +794,9 @@ export const updateStudent = async (req, res) => {
     classroomId,
     subjectIds,
     city,
-      state,
-      pincode,
-      address
+    state,
+    pincode,
+    address,
   } = req.body;
 
   try {
@@ -952,51 +952,38 @@ export const deleteStudent = async (req, res) => {
 };
 
 export const getTeachersForStudent = async (req, res) => {
-  const { studentId } = req.params;
+  // Student token provides req.user.id (userId of the student)
   const { page = 1, limit = 10, academicYearId } = req.query;
 
-  if (req.user.role === "PARENT") {
-    const actingStudentId = req.user.actingAsStudentId;
-    if (!actingStudentId || parseInt(studentId) !== actingStudentId) {
-      return sendError(
-        res,
-        403,
-        "You can only fetch teachers for your selected child",
-        "FORBIDDEN",
-      );
-    }
-  } else if (req.user.role === "STUDENT") {
-    // Student can only fetch for themselves
+  try {
+    // Find the student record associated with the authenticated user
     const studentRecord = await prisma.student.findFirst({
       where: { userId: req.user.id },
       select: { id: true },
     });
 
-    if (!studentRecord || parseInt(studentId) !== studentRecord.id) {
+    if (!studentRecord) {
       return sendError(
         res,
         403,
-        "You can only fetch teachers for yourself",
+        "No student profile found for this user",
         "FORBIDDEN",
       );
     }
-  } else {
-    // Staff/Admin can fetch for any student
-    if (!["STAFF", "ADMIN"].includes(req.user.role)) {
-      return sendError(res, 403, "Unauthorized", "FORBIDDEN");
-    }
-  }
 
-  try {
+    const studentId = studentRecord.id;
+
+    // Determine academic year
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
       const activeYear = await getActiveAcademicYear(req.user.schoolId);
       resolvedAcademicYearId = activeYear?.id;
     }
 
+    // Find the student's stream/classroom for the selected academic year
     const studentStream = await prisma.studentStream.findFirst({
       where: {
-        studentId: parseInt(studentId),
+        studentId: studentId,
         academicYearId: parseInt(resolvedAcademicYearId),
       },
       select: { classroomId: true, streamId: true },
@@ -1011,6 +998,7 @@ export const getTeachersForStudent = async (req, res) => {
       );
     }
 
+    // Build teacher filter based on classroom and optional stream
     const where = {
       teacherAssignments: {
         some: {
@@ -1034,8 +1022,7 @@ export const getTeachersForStudent = async (req, res) => {
           id: true,
           name: true,
           email: true,
-          role: true, // TEACHER, PRINCIPAL, etc.
-          // Add more fields as needed for PTM scheduling
+          role: true,
         },
       }),
     ]);

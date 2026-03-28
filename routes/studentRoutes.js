@@ -58,7 +58,12 @@ router.put(
 
 router.delete("/:id", authenticate, authorize("ADMIN"), deleteStudent);
 
-router.get("/:studentId/teachers", authenticate, getTeachersForStudent);
+router.get(
+  "/teachers/for-student",
+  authenticate,
+  authorize("STUDENT", "PARENT"),
+  getTeachersForStudent,
+);
 
 // New elective routes (all require authentication + role check)
 router.post(
