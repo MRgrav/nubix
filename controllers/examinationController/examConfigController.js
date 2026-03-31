@@ -31,7 +31,7 @@ const updateExamConfigSchema = createExamConfigSchema.partial();
 const createGradingSchemeSchema = z.object({
   boardId: z.number().int().positive("Board ID required"),
   academicYearId: z.number().int().positive("Academic Year ID required"),
-  grade: z.string().min(1).max(10),
+  grade: z.string().min(1, "Grade cannot be empty"),
   minPercent: z.number().min(0).max(100),
   maxPercent: z.number().min(0).max(100),
   formula: z.string().optional(),

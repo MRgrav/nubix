@@ -241,6 +241,7 @@ model Student {
   permanentAddressId Int?
   permanentAddress   Address?           @relation("StudentPermanentAddress", fields: [permanentAddressId], references: [id])
   admissions         AdmissionRequest[]
+  Notification       Notification[]
 }
 
 model Staff {
@@ -305,6 +306,7 @@ model Staff {
   createdBy       User?             @relation("CreatedStaff", fields: [createdById], references: [id])
   updatedBy       User?             @relation("UpdatedStaff", fields: [updatedById], references: [id])
   StaffAttendance StaffAttendance[]
+  Notification    Notification[]
 }
 
 model StaffAttendance {
@@ -459,6 +461,8 @@ model User {
   uploadedDocuments      AdmissionDocument[]    @relation("UploadedDocuments")
   uploadedSchoolDocs     SchoolDocument[]       @relation("UploadedSchoolDocuments")
   uploadedAnnouncements  AnnouncementDocument[] @relation("UploadedAnnouncementDocuments")
+  Notification           Notification[]
+  UserFcmToken           UserFcmToken[]
 }
 
 model Attendance {
@@ -674,7 +678,8 @@ model Announcement {
   academicYearId Int?
   academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
 
-  documents AnnouncementDocument[]
+  documents    AnnouncementDocument[]
+  Notification Notification[]
 
   @@index([schoolId])
   @@index([schoolId, type])
@@ -1615,4 +1620,65 @@ model ExamResult {
   @@index([studentId, termId])
   @@index([updatedById])
   @@index([isComplete])
+}
+
+enum NotificationType {
+  ANNOUNCEMENT
+  ATTENDANCE
+  EXAM
+  FEE
+  ASSIGNMENT
+  TIMETABLE
+  HOLIDAY
+  EVENT
+  SYSTEM
+  OTHER
+}
+
+model Notification {
+  id      Int              @id @default(autoincrement())
+  type    NotificationType
+  title   String
+  message String
+  data    Json? // Extra data (e.g. announcementId, examId, etc.)
+  isRead  Boolean          @default(false)
+  readAt  DateTime?
+
+  userId Int?
+  user   User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  studentId Int?
+  student   Student? @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  staffId Int?
+  staff   Staff? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  announcementId Int?
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([studentId])
+  @@index([staffId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model UserFcmToken {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fcmToken   String  @unique
+  deviceType String? // "ANDROID", "IOS", "WEB"
+  deviceName String?
+  isActive   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([fcmToken])
 }
