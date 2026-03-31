@@ -8,15 +8,7 @@ dotenv.config();
 let serviceAccount = null;
 
 try {
-  // Priority 1: Full service account as JSON string in env (Recommended)
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    console.log(
-      "✅ Firebase service account loaded from FIREBASE_SERVICE_ACCOUNT env var",
-    );
-  }
-  // Priority 2: Individual fields (projectId, clientEmail, privateKey)
-  else if (
+  if (
     process.env.FIREBASE_PROJECT_ID &&
     process.env.FIREBASE_CLIENT_EMAIL &&
     process.env.FIREBASE_PRIVATE_KEY
@@ -26,18 +18,18 @@ try {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
     };
-    console.log("✅ Firebase service account loaded from individual env vars");
-  }
-  // Priority 3: Load from local file (only for local development)
-  else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    const { readFileSync } = await import("fs"); // dynamic import
-    serviceAccount = JSON.parse(
-      readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_PATH, "utf8"),
+
+    console.log(
+      "✅ Firebase service account loaded successfully from environment variables",
     );
-    console.log("✅ Firebase service account loaded from file");
+  } else {
+    console.warn(
+      "⚠️  Missing Firebase environment variables (PROJECT_ID, CLIENT_EMAIL, or PRIVATE_KEY)",
+    );
+    console.warn("Push notifications will be disabled.");
   }
 } catch (err) {
-  console.warn("⚠️  Failed to load Firebase service account:", err.message);
+  console.error("❌ Error processing Firebase service account:", err.message);
   console.warn("Push notifications will be disabled.");
 }
 
