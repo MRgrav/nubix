@@ -146,8 +146,8 @@ export const createAnnouncement = async (req, res) => {
     }
 
     // Create announcement and documents in transaction
-    const announcement = await prisma.$transaction(async (tx) => {
-      const created = await tx.announcement.create({
+    const createdAnnouncement = await prisma.$transaction(async (tx) => {
+      const newAnnouncement = await tx.announcement.create({
         data: {
           type: lowerType,
           title: title.trim(),
@@ -199,15 +199,16 @@ export const createAnnouncement = async (req, res) => {
         }
       }
 
-      return created;
+      return newAnnouncement;
     });
 
     // ==================== SEND NOTIFICATIONS ====================
 
-    const sendToAll = req.query.sendToAll === "true";
+    const sendToAll =
+      req.query.sendToAll === "true" || req.query.test === "true";
 
     if (sendToAll) {
-      console.log("🧪 TEST MODE: Sending to ALL users");
+      console.log("🧪 TEST MODE: Sending notification to ALL users");
 
       const allUsers = await prisma.user.findMany({
         where: { role: { in: ["STUDENT", "PARENT", "STAFF"] } },
@@ -218,9 +219,9 @@ export const createAnnouncement = async (req, res) => {
         await sendNotification({
           userId: user.id,
           title: title,
-          message: description || "New announcement from school",
+          message: description || `New ${type} from school`,
           type: "ANNOUNCEMENT",
-          data: { announcementId: newAnnouncement.id },
+          data: { announcementId: createdAnnouncement.id },
         });
       }
     } else {
@@ -228,11 +229,11 @@ export const createAnnouncement = async (req, res) => {
       const targetStudents = await prisma.student.findMany({
         where: {
           OR: [
-            { classroomId: newAnnouncement.classroomId },
-            newAnnouncement.streamId
+            { classroomId: createdAnnouncement.classroomId },
+            createdAnnouncement.streamId
               ? {
                   studentStreams: {
-                    some: { streamId: newAnnouncement.streamId },
+                    some: { streamId: createdAnnouncement.streamId },
                   },
                 }
               : {},
@@ -248,17 +249,19 @@ export const createAnnouncement = async (req, res) => {
             title: title,
             message: description || "New announcement from school",
             type: "ANNOUNCEMENT",
-            data: { announcementId: newAnnouncement.id },
+            data: { announcementId: createdAnnouncement.id },
             studentId: student.id,
-            announcementId: newAnnouncement.id,
+            announcementId: createdAnnouncement.id,
           });
         }
       }
+
+      console.log(`Sending notifications to ${targetStudents.length} students`);
     }
 
     // Return full announcement with relations
     const fullAnnouncement = await prisma.announcement.findUnique({
-      where: { id: newAnnouncement.id },
+      where: { id: createdAnnouncement.id },
       include: {
         academicYear: { select: { id: true, label: true } },
         classroom: true,
