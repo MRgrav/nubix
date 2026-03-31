@@ -1,10 +1,10 @@
-//
 import prisma from "../models/prisma.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 import { resolveAcademicYearId } from "../utils/resolveAcademicYear.js";
 import { sendSuccess, sendError } from "../utils/responseStructure.js";
 import pb, { ensurePBAuth } from "../utils/pocketbase.js";
 import z from "zod";
+import { sendNotification } from "../utils/notificationService.js";
 
 const parseJSONFields = (body) => {
   const fields = ["documents", "documentsMeta"];
@@ -212,6 +212,49 @@ export const createAnnouncement = async (req, res) => {
           documents: true,
         },
       });
+    });
+
+
+    // ==================== SEND NOTIFICATIONS ====================
+
+    // Get all students who should receive this announcement
+    const targetStudents = await prisma.student.findMany({
+      where: {
+        OR: [
+          { classroomId: announcement.classroomId },
+          announcement.streamId 
+            ? { studentStreams: { some: { streamId: announcement.streamId } } }
+            : {},
+        ],
+      },
+      select: { id: true, userId: true },
+    });
+
+    // Send notification to each student
+    for (const student of targetStudents) {
+      if (student.userId) {
+        await sendNotification({
+          userId: student.userId,
+          title: announcement.title,
+          message: announcement.description || "New announcement from school",
+          type: "ANNOUNCEMENT",
+          data: { 
+            announcementId: announcement.id,
+            type: announcement.type 
+          },
+          studentId: student.id,
+          announcementId: announcement.id,
+        });
+      }
+    }
+
+    // Optional: Also notify staff who created it (for confirmation)
+    await sendNotification({
+      userId: req.user.id,
+      title: "Announcement Created",
+      message: `Your announcement "${announcement.title}" has been published.`,
+      type: "SYSTEM",
+      data: { announcementId: announcement.id },
     });
 
     return sendSuccess(
