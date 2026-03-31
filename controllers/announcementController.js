@@ -214,48 +214,75 @@ export const createAnnouncement = async (req, res) => {
       });
     });
 
-
     // ==================== SEND NOTIFICATIONS ====================
 
-    // Get all students who should receive this announcement
-    const targetStudents = await prisma.student.findMany({
-      where: {
-        OR: [
-          { classroomId: announcement.classroomId },
-          announcement.streamId 
-            ? { studentStreams: { some: { streamId: announcement.streamId } } }
-            : {},
-        ],
-      },
-      select: { id: true, userId: true },
-    });
+    const sendToAll = req.query.sendToAll === "true";
 
-    // Send notification to each student
-    for (const student of targetStudents) {
-      if (student.userId) {
+    if (sendToAll) {
+      console.log("🧪 TEST MODE: Sending notification to ALL users");
+
+      const allUsers = await prisma.user.findMany({
+        where: { role: { in: ["STUDENT", "PARENT", "STAFF"] } },
+        select: { id: true, role: true },
+      });
+
+      for (const user of allUsers) {
         await sendNotification({
-          userId: student.userId,
-          title: announcement.title,
-          message: announcement.description || "New announcement from school",
+          userId: user.id,
+          title: title,
+          message: description || "New announcement from school",
           type: "ANNOUNCEMENT",
-          data: { 
+          data: {
             announcementId: announcement.id,
-            type: announcement.type 
+            type: type,
           },
-          studentId: student.id,
-          announcementId: announcement.id,
         });
       }
+
+      console.log(`✅ Sent test notification to ${allUsers.length} users`);
+    } else {
+      const targetStudents = await prisma.student.findMany({
+        where: {
+          OR: [
+            { classroomId: announcement.classroomId },
+            announcement.streamId
+              ? {
+                  studentStreams: { some: { streamId: announcement.streamId } },
+                }
+              : {},
+          ],
+        },
+        select: { id: true, userId: true },
+      });
+
+      // Send notification to each student
+      for (const student of targetStudents) {
+        if (student.userId) {
+          await sendNotification({
+            userId: student.userId,
+            title: announcement.title,
+            message: announcement.description || "New announcement from school",
+            type: "ANNOUNCEMENT",
+            data: {
+              announcementId: announcement.id,
+              type: announcement.type,
+            },
+            studentId: student.id,
+            announcementId: announcement.id,
+          });
+        }
+      }
     }
+    // Get all students who should receive this announcement
 
     // Optional: Also notify staff who created it (for confirmation)
-    await sendNotification({
-      userId: req.user.id,
-      title: "Announcement Created",
-      message: `Your announcement "${announcement.title}" has been published.`,
-      type: "SYSTEM",
-      data: { announcementId: announcement.id },
-    });
+    // await sendNotification({
+    //   userId: req.user.id,
+    //   title: "Announcement Created",
+    //   message: `Your announcement "${announcement.title}" has been published.`,
+    //   type: "SYSTEM",
+    //   data: { announcementId: announcement.id },
+    // });
 
     return sendSuccess(
       res,
