@@ -20,11 +20,11 @@ export const sendNotification = async ({
         type,
         title,
         message,
-        data,
+        data: data || {},
         userId,
-        studentId,
-        staffId,
-        announcementId,
+        studentId: studentId || null,
+        staffId: staffId || null,
+        announcementId: announcementId || null,
       },
     });
 
@@ -37,27 +37,35 @@ export const sendNotification = async ({
       select: { fcmToken: true },
     });
 
-    if (fcmTokens.length > 0) {
-      const tokens = fcmTokens.map(t => t.fcmToken);
-      
-      if (tokens.length === 1) {
-        await sendPushNotification(tokens[0], title, message, {
-          notificationId: notification.id.toString(),
-          type,
-          ...data,
-        });
-      } else {
-        await sendMulticastNotification(tokens, title, message, {
-          notificationId: notification.id.toString(),
-          type,
-          ...data,
-        });
-      }
+    if (fcmTokens.length === 0) {
+      console.log(`⚠️ No active FCM token found for user ${userId}`);
+      return notification;
+    }
+
+    const stringData = {};
+    Object.keys(data || {}).forEach((key) => {
+      stringData[key] = String(data[key]);
+    });
+
+    const pushResult = await sendPushNotification(
+      fcmTokens.map((t) => t.fcmToken),
+      title,
+      message,
+      stringData,
+    );
+
+    if (pushResult) {
+      console.log(
+        `✅ Push sent successfully to user ${userId} (${fcmTokens.length} tokens)`,
+      );
+    } else {
+      console.log(`❌ Push failed for user ${userId}`);
     }
 
     return notification;
   } catch (err) {
-    console.error("Failed to send notification:", err);
+    console.error(`Failed to send notification to user ${userId}:`, err);
+    // Still return the in-app notification even if push fails
     return null;
   }
 };
