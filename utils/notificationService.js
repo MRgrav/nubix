@@ -76,12 +76,14 @@ export const sendNotification = async ({
   message,
   type = "SYSTEM",
   data = {},
-  studentId,
-  staffId,
-  announcementId,
+  studentId = null,
+  staffId = null,
+  announcementId = null,
 }) => {
   try {
-    // Always create in-app notification first
+    console.log(`[Notification] Starting for user ${userId}, type: ${type}`);
+
+    // 1. Create in-app notification
     const notification = await prisma.notification.create({
       data: {
         type,
@@ -95,37 +97,51 @@ export const sendNotification = async ({
       },
     });
 
-    // Get active FCM tokens for this user
+    console.log(`[Notification] In-app record created for user ${userId}`);
+
+    // 2. Get active FCM tokens
     const fcmRecords = await prisma.userFcmToken.findMany({
-      where: {
-        userId,
-        isActive: true,
-      },
+      where: { userId, isActive: true },
       select: { fcmToken: true },
     });
 
     if (fcmRecords.length === 0) {
       console.log(`⚠️ No active FCM token found for user ${userId}`);
-      return notification; // still return in-app notification
+      return notification;
     }
 
-    // Convert all data values to strings (FCM requirement)
+    console.log(
+      `[Notification] Found ${fcmRecords.length} active token(s) for user ${userId}`,
+    );
+
+    // 3. Convert data to strings (FCM requirement)
     const stringData = {};
     Object.keys(data || {}).forEach((key) => {
       stringData[key] = String(data[key] || "");
     });
 
-    // Send push
-    const pushResult = await sendPushNotification(
-      fcmRecords.map((r) => r.fcmToken),
-      title,
-      message,
-      stringData,
-    );
+    // 4. Send Push - Use MULTICAST when multiple tokens, single when one
+    let pushResult = false;
 
-    if (pushResult?.successCount > 0) {
+    if (fcmRecords.length === 1) {
+      pushResult = await sendPushNotification(
+        fcmRecords[0].fcmToken,
+        title,
+        message,
+        stringData,
+      );
+    } else {
+      pushResult = await sendMulticastNotification(
+        fcmRecords.map((r) => r.fcmToken),
+        title,
+        message,
+        stringData,
+      );
+    }
+
+    if (pushResult) {
       console.log(
-        `✅ Push sent successfully to user ${userId} (${pushResult.successCount} tokens)`,
+        `✅ Push sent successfully to user ${userId} (${fcmRecords.length} token(s))`,
       );
     } else {
       console.log(`❌ Push failed for user ${userId}`);
@@ -133,7 +149,10 @@ export const sendNotification = async ({
 
     return notification;
   } catch (err) {
-    console.error(`Failed to send notification to user ${userId}:`, err);
+    console.error(
+      `❌ Failed to send notification to user ${userId}:`,
+      err.message,
+    );
     return null;
   }
 };

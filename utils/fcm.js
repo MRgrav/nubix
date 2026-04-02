@@ -64,6 +64,11 @@ export const sendPushNotification = async (
     return false;
   }
 
+  if (typeof fcmToken !== "string") {
+    console.error("Invalid fcmToken type:", typeof fcmToken);
+    return false;
+  }
+
   const message = {
     token: fcmToken,
     notification: { title, body },
