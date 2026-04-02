@@ -226,6 +226,7 @@ export const createSlot = async (req, res) => {
       });
     });
 
+    // ==================== SEND NOTIFICATION TO TEACHERS ====================
     try {
       const allTeachers = await prisma.staff.findMany({
         where: {
@@ -235,35 +236,40 @@ export const createSlot = async (req, res) => {
         },
         select: { id: true, userId: true, name: true },
       });
+
       const slotTime = `${Math.floor(startMinutes / 60)
         .toString()
-        .padStart(
-          2,
-          "0",
-        )}:${(startMinutes % 60).toString().padStart(2, "0")} - ${Math.floor(
-        endMinutes / 60,
-      )
+        .padStart(2, "0")}:${(startMinutes % 60)
+        .toString()
+        .padStart(2, "0")} - ${Math.floor(endMinutes / 60)
         .toString()
         .padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+      const classroomName = slot.classroom?.name || "Classroom";
+      const subjectName = slot.subject?.name ? ` - ${slot.subject.name}` : "";
 
       for (const teacher of allTeachers) {
         if (teacher.userId) {
           await sendNotification({
             userId: teacher.userId,
             title: "New Timetable Slot Added",
-            message: `A new ${slotType} slot has been scheduled: ${day} ${slotTime} in ${slot.classroom?.name || "Classroom"}`,
+            message: `A new ${slotType} slot has been scheduled: ${day} ${slotTime}${subjectName} in ${classroomName}`,
             type: "TIMETABLE",
             data: {
-              slotId: slot.id,
-              classroomId: slot.classroomId,
-              day,
-              startTime: startTime,
-              endTime: endTime,
+              slotId: slot.id.toString(), // ← Must be string
+              classroomId: slot.classroomId?.toString() || "",
+              day: day,
+              startTime: startTime || "",
+              endTime: endTime || "",
+              // Optional: Add more readable fields
+              classroomName: classroomName,
+              subjectName: slot.subject?.name || "",
             },
-            staffId: teacher.id, // optional
+            staffId: teacher.id,
           });
         }
       }
+
       console.log(
         `✅ Notification sent to ${allTeachers.length} teachers for new timetable slot`,
       );
@@ -272,6 +278,7 @@ export const createSlot = async (req, res) => {
         "Failed to send timetable notification to teachers:",
         notifyErr,
       );
+      // Do not fail slot creation
     }
 
     return sendSuccess(res, 201, slot, "Timetable slot created successfully");
