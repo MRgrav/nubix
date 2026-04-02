@@ -1,5 +1,6 @@
 import prisma from "../models/prisma.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
+import { sendNotification } from "../utils/notificationService.js";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
 
 const timeToMinutes = (time) => {
@@ -91,32 +92,6 @@ export const createSlot = async (req, res) => {
       });
       if (!teacherExists) return sendError(res, 404, "Teacher not found");
     }
-
-    // === Optional but recommended: same teacher overlap ===
-    // if (teacherId) {
-    //   const teacherOverlap = await prisma.timetableSlot.findFirst({
-    //     where: {
-    //       academicYearId: Number(resolvedAcademicYearId),
-    //       day,
-    //       teacherId: Number(teacherId),
-    //       NOT: {
-    //         OR: [
-    //           { endMinutes: { lte: startMinutes } },
-    //           { startMinutes: { gte: endMinutes } },
-    //         ],
-    //       },
-    //     },
-    //   });
-
-    //   if (teacherOverlap) {
-    //     return sendError(
-    //       res,
-    //       409,
-    //       "Teacher is already assigned to another slot at the same time",
-    //       "TEACHER_CONFLICT",
-    //     );
-    //   }
-    // }
 
     if (teacherId && subjectId) {
       const subjectTeacherOverlap = await prisma.timetableSlot.findFirst({
@@ -250,6 +225,54 @@ export const createSlot = async (req, res) => {
         },
       });
     });
+
+    try {
+      const allTeachers = await prisma.staff.findMany({
+        where: {
+          role: { in: ["TEACHER", "STAFF"] },
+          isActive: true,
+          schoolId: Number(schoolId),
+        },
+        select: { id: true, userId: true, name: true },
+      });
+      const slotTime = `${Math.floor(startMinutes / 60)
+        .toString()
+        .padStart(
+          2,
+          "0",
+        )}:${(startMinutes % 60).toString().padStart(2, "0")} - ${Math.floor(
+        endMinutes / 60,
+      )
+        .toString()
+        .padStart(2, "0")}:${(endMinutes % 60).toString().padStart(2, "0")}`;
+
+      for (const teacher of allTeachers) {
+        if (teacher.userId) {
+          await sendNotification({
+            userId: teacher.userId,
+            title: "New Timetable Slot Added",
+            message: `A new ${slotType} slot has been scheduled: ${day} ${slotTime} in ${slot.classroom?.name || "Classroom"}`,
+            type: "TIMETABLE",
+            data: {
+              slotId: slot.id,
+              classroomId: slot.classroomId,
+              day,
+              startTime: startTime,
+              endTime: endTime,
+            },
+            staffId: teacher.id, // optional
+          });
+        }
+      }
+      console.log(
+        `✅ Notification sent to ${allTeachers.length} teachers for new timetable slot`,
+      );
+    } catch (notifyErr) {
+      console.error(
+        "Failed to send timetable notification to teachers:",
+        notifyErr,
+      );
+    }
 
     return sendSuccess(res, 201, slot, "Timetable slot created successfully");
   } catch (err) {
