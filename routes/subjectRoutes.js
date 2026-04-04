@@ -5,17 +5,15 @@ import {
   getSubject,
   updateSubject,
   deleteSubject,
+  getClassroomSubjects,
 } from "../controllers/subjectController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 const router = express.Router();
 
-router.get("/", authenticate, authorize("ADMIN", "STAFF"), getSubjects);
 router.post("/", authenticate, authorize("ADMIN", "STAFF"), createSubject);
-router.post(
-  "/:subjectId/class-relations",
-  authenticate,
-  authorize("ADMIN", "STAFF")
-);
+router.get("/", authenticate, authorize("ADMIN", "STAFF"), getSubjects);
+router.get("/classroom", authenticate, getClassroomSubjects);
+router.get("/classroom/:classroomId", authenticate, getClassroomSubjects);
 router.get("/:id", authenticate, authorize("ADMIN", "STAFF"), getSubject);
 router.put("/:id", authenticate, authorize("ADMIN", "STAFF"), updateSubject);
 router.delete("/:id", authenticate, authorize("ADMIN", "STAFF"), deleteSubject);
