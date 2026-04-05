@@ -22,7 +22,7 @@ const router = express.Router();
 router.get(
   "/me/student",
   authenticate,
-  authorize("STUDENT"),
+  authorize("STUDENT", "PARENT"),
   getStudentOwnAttendance,
 );
 
