@@ -1019,7 +1019,7 @@ export const getStudentOwnAttendance = async (req, res) => {
       select: {
         id: true,
         name: true,
-        classroom: { select: { name: true, section: true } },
+        classroom: { select: { id: true, name: true, section: true } },
       },
     });
 
@@ -1051,47 +1051,47 @@ export const getStudentOwnAttendance = async (req, res) => {
     if (!academicYearLabel)
       return sendError(res, 400, "Academic year not found");
 
-    const where = {
-      studentId,
-      academicYearId: resolvedAcademicYearId,
-    };
+    const tableName = getAttendanceTableName(academicYearLabel);
 
-    if (subjectId) where.subjectId = parseInt(subjectId);
-    if (status) where.status = status.toUpperCase();
-    if (from || to) {
-      where.date = {};
-      if (from) where.date.gte = new Date(from + "T00:00:00.000Z");
-      if (to) where.date.lte = new Date(to + "T23:59:59.999Z");
-    }
+    // Build where conditions for raw query
+    let whereClause = `"studentId" = ${studentId} AND "academicYearId" = ${resolvedAcademicYearId}`;
+
+    if (subjectId) whereClause += ` AND "subjectId" = ${parseInt(subjectId)}`;
+    if (status) whereClause += ` AND "status" = '${status.toUpperCase()}'`;
+    if (from) whereClause += ` AND "date" >= '${from}'`;
+    if (to) whereClause += ` AND "date" <= '${to}'`;
 
     const pageNum = Math.max(1, Number(page));
     const limitNum = Math.min(100, Math.max(1, Number(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    // Count total
-    const total = await prisma
-      .$queryRawUnsafe(
-        `SELECT COUNT(*)::int as count 
-       FROM "${getAttendanceTableName(academicYearLabel)}" 
-       WHERE "studentId" = $1 AND "academicYearId" = $2`,
-        studentId,
-        resolvedAcademicYearId,
-      )
-      .then((r) => r[0]?.count || 0);
+    // Get total count
+    const countResult = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*)::int as count FROM "${tableName}" WHERE ${whereClause}`,
+    );
+    const total = countResult[0]?.count || 0;
 
-    const attendances = await queryAttendance(where, academicYearLabel, {
-      orderBy: "date DESC",
-      skip,
-      limit: limitNum,
-    });
+    // Get attendance records with subject name (LEFT JOIN)
+    const attendances = await prisma.$queryRawUnsafe(`
+      SELECT 
+        a.*,
+        s.name as "subjectName",
+        s.code as "subjectCode"
+      FROM "${tableName}" a
+      LEFT JOIN "Subject" s ON a."subjectId" = s.id
+      WHERE ${whereClause}
+      ORDER BY a."date" DESC
+      LIMIT ${limitNum} OFFSET ${skip}
+    `);
 
+    // Enrich response
     const enriched = attendances.map((att) => ({
       id: att.id,
-      date: att.date.toISOString().split("T")[0], // cleaner YYYY-MM-DD
+      date: att.date.toISOString().split("T")[0],
       status: att.status,
-      note: att.note,
+      note: att.note || null,
       subjectId: att.subjectId,
-      // only include subject name if needed
+      subjectName: att.subjectName || null,
     }));
 
     return sendSuccess(
