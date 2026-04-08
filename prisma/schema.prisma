@@ -119,6 +119,7 @@ model School {
   boards             Board[]
   address            Address?            @relation("SchoolAddress")
   documents          SchoolDocument[]
+  homeworks          Homework[]
 }
 
 model SchoolDocument {
@@ -463,6 +464,7 @@ model User {
   uploadedAnnouncements  AnnouncementDocument[] @relation("UploadedAnnouncementDocuments")
   Notification           Notification[]
   UserFcmToken           UserFcmToken[]
+  createdHomeworks       Homework[]             @relation("CreatedHomework")
 }
 
 model Attendance {
@@ -1681,4 +1683,28 @@ model UserFcmToken {
 
   @@index([userId])
   @@index([fcmToken])
+}
+
+model Homework {
+  id                 Int      @id @default(autoincrement())
+  text               String
+  lastDate           DateTime
+  fileUrl            String?
+  pocketbaseRecordId String?
+  fileName           String?
+  mimeType           String?
+  fileSizeBytes      Int?
+
+  schoolId Int
+  school   School @relation(fields: [schoolId], references: [id])
+
+  createdById Int?
+  createdBy   User? @relation("CreatedHomework", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([createdById])
+  @@index([lastDate])
 }
