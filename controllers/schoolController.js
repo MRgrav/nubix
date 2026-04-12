@@ -99,14 +99,14 @@ export const createSchool = async (req, res) => {
     }
 
     const files = req.files || [];
-    if (documents.length > files.length) {
-      return sendError(
-        res,
-        400,
-        `Missing files: expected ${documents.length} but got ${files.length}`,
-        "FILE_MISSING",
-      );
-    }
+    // if (documents.length > files.length) {
+    //   return sendError(
+    //     res,
+    //     400,
+    //     `Missing files: expected ${documents.length} but got ${files.length}`,
+    //     "FILE_MISSING",
+    //   );
+    // }
 
     const school = await prisma.$transaction(async (tx) => {
       const newSchool = await tx.school.create({

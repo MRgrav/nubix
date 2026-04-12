@@ -410,7 +410,7 @@ enum AttendanceStatus {
 model User {
   id                  Int       @id @default(autoincrement())
   email               String    @unique
-  password            String // hashed password (never store plain text)
+  password            String
   role                Role      @default(STUDENT)
   createdAt           DateTime  @default(now())
   resetToken          String? // for password reset
@@ -419,8 +419,11 @@ model User {
   student Student?
   staff   Staff?
 
-  school                School?        @relation(fields: [schoolId], references: [id])
-  schoolId              Int?
+  school   School? @relation(fields: [schoolId], references: [id])
+  schoolId Int?
+
+  passwordResetToken    String?
+  passwordResetExpires  DateTime?
   announcements         Announcement[] @relation("UserAnnouncements")
   ptmRequestsCreated    PTMRequest[]   @relation("PTMRequestedBy")
   ptmRequestsReceived   PTMRequest[]   @relation("PTMRequestedTo")
@@ -465,6 +468,23 @@ model User {
   Notification           Notification[]
   UserFcmToken           UserFcmToken[]
   createdHomeworks       Homework[]             @relation("CreatedHomework")
+  PasswordResetToken     PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token     String   @unique // OTP (6-digit)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId])
+  @@index([userId])
+  @@index([token])
 }
 
 model Attendance {

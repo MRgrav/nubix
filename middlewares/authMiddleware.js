@@ -98,21 +98,21 @@ import jwt from "jsonwebtoken";
 import prisma from "../models/prisma.js";
 
 export const authenticate = async (req, res, next) => {
-  console.log("🔐 AUTH START: New request received");
+  // console.log("🔐 AUTH START: New request received");
 
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log("❌ AUTH FAILED: No Bearer token in header");
+      // console.log("❌ AUTH FAILED: No Bearer token in header");
       return res.status(401).json({ error: "No token provided" });
     }
 
     const token = authHeader.split(" ")[1];
-    console.log(`🔑 Token received (length: ${token.length})`);
+    // console.log(`🔑 Token received (length: ${token.length})`);
 
     if (!process.env.JWT_SECRET) {
-      console.log("❌ AUTH FAILED: JWT_SECRET environment variable is missing");
+      // console.log("❌ AUTH FAILED: JWT_SECRET environment variable is missing");
       return res.status(500).json({ error: "Server configuration error" });
     }
 
@@ -120,14 +120,14 @@ export const authenticate = async (req, res, next) => {
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("✅ JWT verified successfully");
-      console.log("Decoded payload:", {
-        userId: decoded.userId,
-        role: decoded.role,
-        schoolId: decoded.schoolId,
-      });
+      // console.log("✅ JWT verified successfully");
+      // console.log("Decoded payload:", {
+      //   userId: decoded.userId,
+      //   role: decoded.role,
+      //   schoolId: decoded.schoolId,
+      // });
     } catch (jwtErr) {
-      console.log("❌ JWT Verification Failed:", jwtErr.message);
+      // console.log("❌ JWT Verification Failed:", jwtErr.message);
       if (jwtErr instanceof jwt.TokenExpiredError) {
         return res.status(401).json({ error: "Token has expired" });
       }
@@ -135,12 +135,12 @@ export const authenticate = async (req, res, next) => {
     }
 
     if (!decoded.userId) {
-      console.log("❌ AUTH FAILED: Token missing userId");
+      // console.log("❌ AUTH FAILED: Token missing userId");
       return res.status(401).json({ error: "Invalid token payload" });
     }
 
     // Fetch user from database
-    console.log(`🔍 Looking up user ID: ${decoded.userId}`);
+    // console.log(`🔍 Looking up user ID: ${decoded.userId}`);
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       include: {
@@ -157,7 +157,7 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({ error: "Invalid token - user not found" });
     }
 
-    console.log(`✅ User found → ID: ${user.id}, Role: ${user.role}`);
+    // console.log(`✅ User found → ID: ${user.id}, Role: ${user.role}`);
 
     // Resolve schoolId (priority: token > user.school > staff > student)
     const schoolId =
@@ -169,7 +169,7 @@ export const authenticate = async (req, res, next) => {
     if (!schoolId) {
       console.log("⚠️ Warning: Could not resolve schoolId for this user");
     } else {
-      console.log(`🏫 School resolved: ${schoolId}`);
+      // console.log(`🏫 School resolved: ${schoolId}`);
     }
 
     // Final req.user object
@@ -183,8 +183,8 @@ export const authenticate = async (req, res, next) => {
       ...decoded,
     };
 
-    console.log("✅ AUTH SUCCESS: req.user attached successfully");
-    console.log("Final req.user role:", req.user.role);
+    // console.log("✅ AUTH SUCCESS: req.user attached successfully");
+    // console.log("Final req.user role:", req.user.role);
 
     next();
   } catch (error) {
@@ -197,9 +197,9 @@ export const authenticate = async (req, res, next) => {
 
 export const authorize = (...roles) => {
   return (req, res, next) => {
-    console.log(
-      `🔐 AUTHORIZE: Checking role. Required: [${roles.join(", ")}], User role: ${req.user?.role || "undefined"}`,
-    );
+    // console.log(
+    //   `🔐 AUTHORIZE: Checking role. Required: [${roles.join(", ")}], User role: ${req.user?.role || "undefined"}`,
+    // );
 
     if (!req.user) {
       console.log(
@@ -215,7 +215,7 @@ export const authorize = (...roles) => {
       });
     }
 
-    console.log("✅ AUTHORIZE SUCCESS");
+    // console.log("✅ AUTHORIZE SUCCESS");
     next();
   };
 };
