@@ -4,8 +4,8 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
-
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
+import { sendOTPEmail } from "../utils/emailService.js";
 
 // Create email transporter - Replace with your email service in production
 const transporter = nodemailer.createTransport({
@@ -16,6 +16,10 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS,
   },
 });
+
+const generateOTP = () => {
+  return crypto.randomInt(100000, 999999).toString();
+};
 
 export const generateTokens = (
   userId,
@@ -393,140 +397,6 @@ export const refreshToken = async (req, res) => {
   }
 };
 
-export const forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    // Find user by email
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const passwordResetToken = crypto
-      .createHash("sha256")
-      .update(resetToken)
-      .digest("hex");
-
-    // Set token expiry to 10 minutes from now
-    const passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-    // Save reset token and expiry to user
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        resetToken: passwordResetToken,
-        resetTokenExpiresAt: passwordResetExpires,
-      },
-    });
-
-    // Create reset URL
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-
-    // Send email
-    const mailOptions = {
-      from: process.env.EMAIL_FROM,
-      to: user.email,
-      subject: "Password Reset Request",
-      html: `
-        <p>You requested a password reset.</p>
-        <p>Click this link to reset your password (valid for 10 minutes):</p>
-        <a href="${resetUrl}">${resetUrl}</a>
-        <p>If you didn't request this, please ignore this email.</p>
-      `,
-    };
-
-    await transporter.sendMail(mailOptions);
-
-    res.json({
-      message: "Password reset link sent to email",
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      error: "Error sending password reset email",
-    });
-  }
-};
-
-export const resetPassword = async (req, res) => {
-  try {
-    const { token } = req.params;
-    const { password } = req.body;
-
-    // Hash the token for comparison
-    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-
-    // Find user with valid reset token
-    const user = await prisma.user.findFirst({
-      where: {
-        resetToken: hashedToken,
-        resetTokenExpiresAt: {
-          gt: new Date(),
-        },
-      },
-    });
-
-    if (!user) {
-      return res.status(400).json({
-        error: "Invalid or expired reset token",
-      });
-    }
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Update user's password and clear reset token
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        password: hashedPassword,
-        resetToken: null,
-        resetTokenExpiresAt: null,
-      },
-    });
-
-    res.json({
-      message: "Password reset successful",
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      error: "Error resetting password",
-    });
-  }
-};
-
-export const changePassword = async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  const userId = req.user.id;
-
-  try {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    const valid = await bcrypt.compare(currentPassword, user.password);
-
-    if (!valid) {
-      return res.status(401).json({ error: "Current password is incorrect" });
-    }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await prisma.user.update({
-      where: { id: userId },
-      data: { password: hashedPassword },
-    });
-
-    res.json({ message: "Password updated successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to update password" });
-  }
-};
-
 /**
  * Admin-only: Update own admin profile
  * Allowed fields: name, email, schoolId, password (with current password verification)
@@ -625,5 +495,158 @@ export const updateAdminProfile = async (req, res) => {
     }
 
     return sendError(res, 500, "Failed to update admin profile", err.message);
+  }
+};
+
+// 1. Request OTP for Password Reset
+export const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return sendError(res, 400, "Email is required", "VALIDATION_ERROR");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+
+    if (!user) {
+      return sendError(
+        res,
+        404,
+        "No account found with this email",
+        "USER_NOT_FOUND",
+      );
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Upsert using the unique 'token' field + userId combination
+    await prisma.passwordResetToken.upsert({
+      where: {
+        userId: user.id, // This works if you have a compound unique or just use token as primary lookup
+      },
+      update: {
+        token: otp,
+        expiresAt,
+        used: false,
+      },
+      create: {
+        userId: user.id,
+        token: otp,
+        expiresAt,
+        used: false,
+      },
+    });
+
+    // Send OTP via email
+    await sendOTPEmail(email, otp);
+
+    // console.log(`✅ OTP ${otp} sent to ${email}`);
+
+    return sendSuccess(
+      res,
+      200,
+      null,
+      "OTP sent to your email. Valid for 10 minutes.",
+    );
+  } catch (err) {
+    console.error("Request password reset error:", err);
+    return sendError(res, 500, "Failed to send OTP", "INTERNAL_ERROR");
+  }
+};
+
+// 2. Reset Password using OTP
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    // Detailed logging for debugging
+    // console.log("Reset password request received with body:", req.body);
+
+    if (!email || !otp || !newPassword) {
+      return sendError(
+        res,
+        400,
+        "Email, OTP, and new password are all required",
+        "VALIDATION_ERROR",
+      );
+    }
+
+    // Trim and normalize
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedOtp = otp.toString().trim();
+
+    if (normalizedOtp.length !== 6) {
+      return sendError(res, 400, "OTP must be 6 digits", "INVALID_OTP");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (!user) {
+      return sendError(
+        res,
+        404,
+        "No account found with this email",
+        "USER_NOT_FOUND",
+      );
+    }
+
+    // Find valid OTP
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: {
+        userId: user.id,
+        token: normalizedOtp,
+        used: false,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!resetToken) {
+      return sendError(
+        res,
+        400,
+        "Invalid or expired OTP. Please request a new one.",
+        "INVALID_OTP",
+      );
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password and mark token as used in a transaction
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword },
+      }),
+      prisma.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { used: true },
+      }),
+    ]);
+
+    // console.log(`✅ Password reset successful for user: ${normalizedEmail}`);
+
+    return sendSuccess(
+      res,
+      200,
+      null,
+      "Password has been reset successfully. You can now login with your new password.",
+    );
+  } catch (err) {
+    console.error("Reset password error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to reset password. Please try again.",
+      "INTERNAL_ERROR",
+    );
   }
 };

@@ -3,8 +3,7 @@ import {
   createUser,
   login,
   refreshToken,
-  changePassword,
-  forgotPassword,
+  requestPasswordReset,
   resetPassword,
   setupAdmin,
   updateAdminProfile,
@@ -17,11 +16,8 @@ const router = express.Router();
 // Public routes
 router.post("/login", loginValidation, login);
 router.post("/refresh-token", refreshToken);
-router.post("/forgot-password", forgotPassword);
-router.post("/reset-password/:token", resetPassword);
-
-// Protected routes
-router.post("/change-password", authenticate, changePassword);
+router.post("/password-reset/request", requestPasswordReset);
+router.post("/password-reset/confirm", resetPassword);
 
 // One-time bootstrap route to create initial ADMIN. Requires BOOTSTRAP_ADMIN_SECRET env var.
 router.post("/setup-admin", setupAdmin);
