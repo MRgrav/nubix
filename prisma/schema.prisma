@@ -759,7 +759,7 @@ model PTMRequest {
   student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   class   String
-  section String
+  section String?
 
   // Request creator
   requestedById   Int

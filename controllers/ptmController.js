@@ -218,6 +218,130 @@ export const requestPTM = async (req, res) => {
   }
 };
 
+// Bulk PTM Request from Teacher to Multiple Students
+export const bulkRequestPTM = async (req, res) => {
+  try {
+    const {
+      studentIds, // array of student IDs
+      requestedDate,
+      requestedTime,
+      mode = "offline",
+      purpose = "",
+    } = req.body;
+
+    const user = req.user;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return sendError(
+        res,
+        400,
+        "studentIds array is required and cannot be empty",
+        "VALIDATION_ERROR",
+      );
+    }
+
+    if (!requestedDate || !requestedTime) {
+      return sendError(
+        res,
+        400,
+        "requestedDate and requestedTime are required",
+        "VALIDATION_ERROR",
+      );
+    }
+
+    // Only teachers/staff/admins can create bulk PTM
+    if (!["STAFF", "ADMIN"].includes(user.role)) {
+      return sendError(
+        res,
+        403,
+        "Only staff and admin can create bulk PTM requests",
+        "FORBIDDEN",
+      );
+    }
+
+    const activeYear = await getActiveAcademicYear(user.schoolId);
+    if (!activeYear) {
+      return sendError(
+        res,
+        400,
+        "No active academic year found",
+        "ACADEMIC_YEAR_ERROR",
+      );
+    }
+
+    // Fetch all students + their classroom info in one query
+    const students = await prisma.student.findMany({
+      where: {
+        id: { in: studentIds.map((id) => Number(id)) },
+        schoolId: user.schoolId,
+      },
+      select: {
+        id: true,
+        name: true,
+        classroomId: true,
+        classroom: {
+          select: { name: true, section: true },
+        },
+      },
+    });
+
+    if (students.length === 0) {
+      return sendError(res, 404, "No valid students found", "NOT_FOUND");
+    }
+
+    const createdPTMs = [];
+
+    const ptmRequests = await prisma.$transaction(async (tx) => {
+      const requests = [];
+
+      for (const student of students) {
+        const ptm = await tx.pTMRequest.create({
+          data: {
+            studentId: student.id,
+            requestedById: user.id,
+            requestedByRole: user.role,
+            requestedToId: user.id,
+            requestedToId: user.id,
+            requestedToRole: user.role,
+
+            requestedDate: new Date(requestedDate),
+            requestedTime: requestedTime.trim(),
+            mode,
+            purpose: purpose.trim() || null,
+            status: "pending",
+            academicYearId: activeYear.id,
+            class: student.classroom?.name || "Unknown",
+            section: student.classroom?.section || null,
+          },
+          include: {
+            student: { select: { id: true, name: true } },
+            requestedBy: { select: { id: true, role: true } },
+          },
+        });
+
+        requests.push(ptm);
+      }
+
+      return requests;
+    });
+
+    return sendSuccess(
+      res,
+      201,
+      ptmRequests,
+      `Bulk PTM request created for ${ptmRequests.length} students`,
+    );
+  } catch (err) {
+    console.error("Bulk PTM request error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to create bulk PTM requests",
+      "INTERNAL_ERROR",
+    );
+  }
+};
+
 export const getMyPTMs = async (req, res) => {
   const user = req.user;
   const { academicYearId, page = 1, limit = 10 } = req.query;

@@ -612,7 +612,7 @@ export const approveAdmission = async (req, res) => {
       } else {
         const formattedParents = (admission.parents || []).map((parent) => ({
           name: parent.name,
-          type: parent.type, // map type → relation
+          type: parent.type,
           phone: parent.phone,
           email: parent.email,
           isPrimary: parent.isPrimary,

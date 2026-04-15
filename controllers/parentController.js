@@ -3,7 +3,6 @@ import bcrypt from "bcryptjs";
 import { generateSecurePassword } from "../controllers/authController.js";
 import { sendError, sendSuccess } from "../utils/responseStructure.js";
 import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
-import jwt from "jsonwebtoken";
 import { generateTokens } from "../controllers/authController.js";
 
 export const createParent = async (req, res) => {
@@ -46,7 +45,12 @@ export const createParent = async (req, res) => {
 
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email, password: hashedPassword, role: "PARENT" },
+        data: {
+          email,
+          password: hashedPassword,
+          role: "PARENT",
+          schoolId: req.user.schoolId,
+        },
       });
 
       const parent = await tx.parent.create({
@@ -72,7 +76,7 @@ export const createParent = async (req, res) => {
         });
       }
 
-      return { parent, tempPassword, link };
+      return { parent, user, tempPassword, link };
     });
 
     return sendSuccess(
@@ -83,7 +87,7 @@ export const createParent = async (req, res) => {
         temporaryPassword: result.tempPassword,
         ...(result.link && { link: result.link }),
       },
-      "Parent created successfully",
+      "Parent created successfully with temporary password",
     );
   } catch (err) {
     console.error(err);

@@ -18,7 +18,7 @@ export async function getStudentSubjects(
     },
     orderBy: { createdAt: "desc" },
     include: {
-      classroom: { select: { id: true, name: true } }, // ← we need classroomId
+      classroom: { select: { id: true, name: true } },
       stream: { select: { id: true } },
       academicYear: { select: { id: true, label: true } },
     },
