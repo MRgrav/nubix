@@ -30,10 +30,6 @@ export async function createStudentService(tx, inputData, createdById = null) {
     electiveCurriculumSubjectIds = [],
   } = inputData;
 
-  // ─────────────────────────────────────────────
-  // ⭐ HARD VALIDATION (SERVICE MUST NOT TRUST INPUT)
-  // ─────────────────────────────────────────────
-
   const safeName = name?.trim();
   const safeEmail = email?.trim();
 

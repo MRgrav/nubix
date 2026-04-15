@@ -11,6 +11,7 @@ import {
   deletePTM,
   searchStudentsForPTM,
   searchTeachersForPTM,
+  bulkRequestPTM,
 } from "../controllers/ptmController.js";
 
 import { enforceStudentAccess } from "../middlewares/studentAccessMiddleware.js";
@@ -19,6 +20,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.post("/request", enforceStudentAccess, requestPTM);
+router.post("/request/bulk", authorize("ADMIN", "STAFF"), bulkRequestPTM);
 router.get("/me", enforceStudentAccess, getMyPTMs);
 
 // Admin only
