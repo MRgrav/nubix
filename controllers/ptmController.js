@@ -249,7 +249,6 @@ export const bulkRequestPTM = async (req, res) => {
       );
     }
 
-    // Only teachers/staff/admins can create bulk PTM
     if (!["STAFF", "ADMIN"].includes(user.role)) {
       return sendError(
         res,
@@ -282,6 +281,12 @@ export const bulkRequestPTM = async (req, res) => {
         classroom: {
           select: { name: true, section: true },
         },
+        user: {
+          select: {
+            id: true,
+            role: true,
+          },
+        },
       },
     });
 
@@ -289,20 +294,24 @@ export const bulkRequestPTM = async (req, res) => {
       return sendError(res, 404, "No valid students found", "NOT_FOUND");
     }
 
-    const createdPTMs = [];
-
     const ptmRequests = await prisma.$transaction(async (tx) => {
       const requests = [];
 
       for (const student of students) {
+        const studentUser = student.user;
+        if (!studentUser) {
+          console.warn(`Student ${student.id} has no linked user`);
+          continue;
+        }
         const ptm = await tx.pTMRequest.create({
           data: {
             studentId: student.id,
+
             requestedById: user.id,
             requestedByRole: user.role,
-            requestedToId: user.id,
-            requestedToId: user.id,
-            requestedToRole: user.role,
+
+            requestedToId: studentUser.id,
+            requestedToRole: studentUser.role,
 
             requestedDate: new Date(requestedDate),
             requestedTime: requestedTime.trim(),
@@ -316,6 +325,7 @@ export const bulkRequestPTM = async (req, res) => {
           include: {
             student: { select: { id: true, name: true } },
             requestedBy: { select: { id: true, role: true } },
+            requestedTo: { select: { id: true, role: true } },
           },
         });
 
