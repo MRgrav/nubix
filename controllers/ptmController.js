@@ -354,7 +354,7 @@ export const bulkRequestPTM = async (req, res) => {
 
 export const getMyPTMs = async (req, res) => {
   const user = req.user;
-  const { academicYearId, page = 1, limit = 10 } = req.query;
+  const { academicYearId, page = 1, limit = 20 } = req.query;
   try {
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
@@ -434,6 +434,8 @@ export const getMyPTMs = async (req, res) => {
           mode: true,
           status: true,
           purpose: true,
+          suggestedDate: true,
+          suggestedTime: true,
           createdAt: true,
           student: {
             select: {
@@ -486,6 +488,8 @@ export const getMyPTMs = async (req, res) => {
       mode: p.mode,
       status: p.status,
       purpose: p.purpose,
+      suggestedDate: p.suggestedDate,
+      suggestedTime: p.suggestedTime,
       academicYear: p.academicYear?.label ?? null,
       createdAt: p.createdAt,
       requestedBy: {
@@ -899,7 +903,7 @@ export const getAllPTMs = async (req, res) => {
   if (req.user.role !== "ADMIN") {
     return sendError(res, 403, "Admin only", "FORBIDDEN");
   }
-  const { academicYearId, status, page = 1, limit = 10 } = req.query;
+  const { academicYearId, status, page = 1, limit = 30 } = req.query;
   try {
     let resolvedAcademicYearId = academicYearId;
     if (!resolvedAcademicYearId) {
@@ -927,6 +931,8 @@ export const getAllPTMs = async (req, res) => {
           mode: true,
           status: true,
           purpose: true,
+          suggestedDate: true,
+          suggestedTime: true,
           createdAt: true,
           student: {
             select: {
@@ -979,6 +985,8 @@ export const getAllPTMs = async (req, res) => {
       mode: p.mode,
       status: p.status,
       purpose: p.purpose,
+      suggestedTime: p.suggestedTime,
+      suggestedDate: p.suggestedDate,
       academicYear: p.academicYear?.label ?? null,
       createdAt: p.createdAt,
       requestedBy: {
@@ -1035,7 +1043,7 @@ export const searchStudentsForPTM = async (req, res) => {
   const {
     search = "",
     page = 1,
-    limit = 15,
+    limit = 60,
     classroomId,
     section,
     streamId,
@@ -1184,7 +1192,7 @@ export const searchTeachersForPTM = async (req, res) => {
   const {
     search = "",
     page = "1",
-    limit = 10,
+    limit = 60,
     subjectId,
     classroomId,
   } = req.query;
