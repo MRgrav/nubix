@@ -5,10 +5,23 @@ import { ensurePBAuth } from "../utils/pocketbase.js";
 import pb from "../utils/pocketbase.js";
 import z from "zod";
 
+/** True if classroom name resolves to class 11 or 12 (digits or XI/XII). */
+function classroomAllowsStream(classroomName) {
+  if (!classroomName) return false;
+  const m = classroomName.trim().toLowerCase().match(/(\d{1,2}|xi|xii)/i);
+  if (!m) return false;
+  const g = m[1].toLowerCase();
+  const num = g === "xi" ? 11 : g === "xii" ? 12 : parseInt(g, 10);
+  return num === 11 || num === 12;
+}
+
 // ─── Zod Schema ──────────────────────────────────────────────────────────────
 const homeworkSchema = z.object({
   text: z.string().min(1, "Text is required"),
+  description: z.string().nullish(),
   lastDate: z.string().min(1, "Last date is required"),
+  classId: z.coerce.number().int().positive().nullish(),
+  streamId: z.coerce.number().int().positive().nullish(),
 });
 
 // ─── 1. Create Homework ───────────────────────────────────────────────────────
@@ -24,8 +37,38 @@ export const createHomework = async (req, res) => {
       );
     }
 
-    const { text, lastDate } = parsed.data;
+    const { text, description, lastDate, classId, streamId } = parsed.data;
     const file = req.file || null;
+
+    let classroom = null;
+    if (classId) {
+      classroom = await prisma.classroom.findFirst({
+        where: { id: Number(classId), schoolId: req.user.schoolId },
+        select: { id: true, name: true },
+      });
+      if (!classroom) {
+        return sendError(res, 404, "Classroom not found", "NOT_FOUND");
+      }
+    }
+
+    if (streamId) {
+      if (!classId || !classroom) {
+        return sendError(
+          res,
+          400,
+          "classId is required when streamId is set",
+          "VALIDATION_ERROR",
+        );
+      }
+      if (!classroomAllowsStream(classroom.name)) {
+        return sendError(
+          res,
+          400,
+          "Stream is allowed only for class 11 and 12",
+          "VALIDATION_ERROR",
+        );
+      }
+    }
 
     let fileUrl = null;
     let pocketbaseRecordId = null;
@@ -55,17 +98,26 @@ export const createHomework = async (req, res) => {
     const homework = await prisma.homework.create({
       data: {
         text,
+        ...(description !== undefined && { description }),
         lastDate: new Date(lastDate),
         fileUrl,
         pocketbaseRecordId,
         fileName,
         mimeType,
         fileSizeBytes,
+        ...(classId && {
+          classroom: { connect: { id: Number(classId) } },
+        }),
+        ...(streamId && {
+          stream: { connect: { id: Number(streamId) } },
+        }),
         schoolId: req.user.schoolId,
         createdById: req.user.id,
       },
       include: {
         createdBy: { select: { id: true, email: true, role: true } },
+        classroom: { select: { id: true, name: true, section: true } },
+        stream: { select: { id: true, name: true } },
       },
     });
 
@@ -78,13 +130,15 @@ export const createHomework = async (req, res) => {
 
 // ─── 2. Get All Homeworks ─────────────────────────────────────────────────────
 export const getHomeworks = async (req, res) => {
-  const { page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20, classId, streamId } = req.query;
 
   try {
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
 
     const where = { schoolId: req.user.schoolId };
+    if (classId) where.classId = Number(classId);
+    if (streamId) where.streamId = Number(streamId);
 
     const [total, homeworks] = await prisma.$transaction([
       prisma.homework.count({ where }),
@@ -95,6 +149,8 @@ export const getHomeworks = async (req, res) => {
         orderBy: { createdAt: "desc" },
         include: {
           createdBy: { select: { id: true, email: true, role: true } },
+          classroom: { select: { id: true, name: true, section: true } },
+          stream: { select: { id: true, name: true } },
         },
       }),
     ]);
@@ -120,6 +176,8 @@ export const getHomework = async (req, res) => {
       where: { id: Number(req.params.id) },
       include: {
         createdBy: { select: { id: true, email: true, role: true } },
+        classroom: { select: { id: true, name: true, section: true } },
+        stream: { select: { id: true, name: true } },
       },
     });
 

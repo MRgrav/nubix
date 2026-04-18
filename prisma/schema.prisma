@@ -65,6 +65,7 @@ model Stream {
   timetableSlot    TimetableSlot[]
   Exam             Exam[]
   AdmissionRequest AdmissionRequest[]
+  homeworks      Homework[] @relation("StreamHomeworks")
 
   @@index([name])
 }
@@ -569,6 +570,7 @@ model Classroom {
   announcements      Announcement[]      @relation("ClassroomAnnouncements")
   AdmissionRequest   AdmissionRequest[]
   curriculumSubjects CurriculumSubject[]
+  homeworks          Homework[]
 }
 
 enum DayOfWeek {
@@ -1708,12 +1710,19 @@ model UserFcmToken {
 model Homework {
   id                 Int      @id @default(autoincrement())
   text               String
+  description        String?
   lastDate           DateTime
   fileUrl            String?
   pocketbaseRecordId String?
   fileName           String?
   mimeType           String?
   fileSizeBytes      Int?
+
+  classId     Int?
+  classroom   Classroom? @relation(fields: [classId], references: [id], onDelete: SetNull)
+
+  streamId Int?
+  stream   Stream? @relation("StreamHomeworks", fields: [streamId], references: [id], onDelete: SetNull)
 
   schoolId Int
   school   School @relation(fields: [schoolId], references: [id])
@@ -1727,4 +1736,6 @@ model Homework {
   @@index([schoolId])
   @@index([createdById])
   @@index([lastDate])
+  @@index([streamId])
+  @@index([classId])
 }
