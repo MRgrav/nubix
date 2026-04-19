@@ -65,7 +65,7 @@ model Stream {
   timetableSlot    TimetableSlot[]
   Exam             Exam[]
   AdmissionRequest AdmissionRequest[]
-  homeworks      Homework[] @relation("StreamHomeworks")
+  homeworks        Homework[]         @relation("StreamHomeworks")
 
   @@index([name])
 }
@@ -1718,8 +1718,8 @@ model Homework {
   mimeType           String?
   fileSizeBytes      Int?
 
-  classId     Int?
-  classroom   Classroom? @relation(fields: [classId], references: [id], onDelete: SetNull)
+  classId   Int?
+  classroom Classroom? @relation(fields: [classId], references: [id], onDelete: SetNull)
 
   streamId Int?
   stream   Stream? @relation("StreamHomeworks", fields: [streamId], references: [id], onDelete: SetNull)

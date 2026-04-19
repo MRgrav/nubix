@@ -4,11 +4,15 @@ import { sendSuccess, sendError } from "../utils/responseStructure.js";
 import { ensurePBAuth } from "../utils/pocketbase.js";
 import pb from "../utils/pocketbase.js";
 import z from "zod";
+import { getActiveAcademicYear } from "../utils/academicYearHelper.js";
 
 /** True if classroom name resolves to class 11 or 12 (digits or XI/XII). */
 function classroomAllowsStream(classroomName) {
   if (!classroomName) return false;
-  const m = classroomName.trim().toLowerCase().match(/(\d{1,2}|xi|xii)/i);
+  const m = classroomName
+    .trim()
+    .toLowerCase()
+    .match(/(\d{1,2}|xi|xii)/i);
   if (!m) return false;
   const g = m[1].toLowerCase();
   const num = g === "xi" ? 11 : g === "xii" ? 12 : parseInt(g, 10);
@@ -86,7 +90,9 @@ export const createHomework = async (req, res) => {
       formData.append("mimeType", file.mimetype);
       formData.append("fileSizeBytes", file.size.toString());
 
-      const pbRecord = await pb.collection("homework_documents").create(formData);
+      const pbRecord = await pb
+        .collection("homework_documents")
+        .create(formData);
 
       fileUrl = `${process.env.POCKETBASE_URL}/api/files/homework_documents/${pbRecord.id}/${pbRecord.file}`;
       pocketbaseRecordId = pbRecord.id;
@@ -199,7 +205,9 @@ export const deleteHomework = async (req, res) => {
     if (homework.pocketbaseRecordId) {
       try {
         await ensurePBAuth();
-        await pb.collection("homework_documents").delete(homework.pocketbaseRecordId);
+        await pb
+          .collection("homework_documents")
+          .delete(homework.pocketbaseRecordId);
       } catch (pbErr) {
         console.warn("PocketBase delete failed (continuing):", pbErr.message);
       }
@@ -211,5 +219,120 @@ export const deleteHomework = async (req, res) => {
   } catch (err) {
     console.error("Delete homework error:", err);
     return sendError(res, 500, "Failed to delete homework", err.message);
+  }
+};
+
+// ─── Get My Homeworks (for STUDENT and PARENT) ───────────────────────────────
+export const getMyHomeworks = async (req, res) => {
+  try {
+    const user = req.user;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!["STUDENT", "PARENT"].includes(user.role)) {
+      return sendError(
+        res,
+        403,
+        "Only students and parents can access this",
+        "FORBIDDEN",
+      );
+    }
+
+    let studentId;
+
+    if (user.role === "STUDENT") {
+      const student = await prisma.student.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!student) return sendError(res, 404, "Student profile not found");
+      studentId = student.id;
+    } else if (user.role === "PARENT") {
+      if (!user.actingAsStudentId) {
+        return sendError(
+          res,
+          403,
+          "Please select a child first",
+          "CHILD_NOT_SELECTED",
+        );
+      }
+      studentId = user.actingAsStudentId;
+    }
+
+    // Get active academic year
+    const activeYear = await getActiveAcademicYear(user.schoolId);
+    if (!activeYear) {
+      return sendError(res, 400, "No active academic year found");
+    }
+
+    // Get student's current classroom + stream
+    const enrollment = await prisma.studentStream.findFirst({
+      where: {
+        studentId,
+        academicYearId: activeYear.id,
+      },
+      select: {
+        classroomId: true,
+        streamId: true,
+      },
+    });
+
+    if (!enrollment || !enrollment.classroomId) {
+      return sendSuccess(res, 200, [], "No active classroom enrollment found", {
+        total: 0,
+        pages: 0,
+      });
+    }
+
+    const pageNum = Math.max(1, Number(page));
+    const limitNum = Math.min(50, Math.max(1, Number(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Correct where condition for homework
+    const where = {
+      schoolId: user.schoolId,
+      classId: enrollment.classroomId,
+    };
+
+    // For students in streams (Class 11/12): show stream-specific OR general homework
+    if (enrollment.streamId) {
+      where.OR = [{ streamId: enrollment.streamId }, { streamId: null }];
+    }
+    // For lower classes (no stream): only show homework with no stream assigned
+    else {
+      where.streamId = null;
+    }
+
+    const [total, homeworks] = await prisma.$transaction([
+      prisma.homework.count({ where }),
+      prisma.homework.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy: { createdAt: "desc" },
+        include: {
+          classroom: { select: { id: true, name: true, section: true } },
+          stream: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, email: true, role: true } },
+        },
+      }),
+    ]);
+
+    return sendSuccess(
+      res,
+      200,
+      homeworks,
+      "Your homeworks fetched successfully",
+      {
+        total,
+        pages: Math.ceil(total / limitNum),
+        currentPage: pageNum,
+        perPage: limitNum,
+        hasNext: skip + limitNum < total,
+        hasPrev: pageNum > 1,
+      },
+    );
+  } catch (err) {
+    console.error("Get my homeworks error:", err);
+    return sendError(res, 500, "Failed to fetch homeworks", "INTERNAL_ERROR");
   }
 };
