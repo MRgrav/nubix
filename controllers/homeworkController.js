@@ -105,12 +105,8 @@ export const createHomework = async (req, res) => {
         fileName,
         mimeType,
         fileSizeBytes,
-        ...(classId && {
-          classroom: { connect: { id: Number(classId) } },
-        }),
-        ...(streamId && {
-          stream: { connect: { id: Number(streamId) } },
-        }),
+        ...(classId && { classId: Number(classId) }),
+        ...(streamId && { streamId: Number(streamId) }),
         schoolId: req.user.schoolId,
         createdById: req.user.id,
       },
