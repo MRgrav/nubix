@@ -29,7 +29,7 @@ router.get(
 router.get(
   "/me/student/stats",
   authenticate,
-  authorize("STUDENT"),
+  authorize("STUDENT", "PARENT"),
   getStudentOwnAttendanceStats,
 );
 
