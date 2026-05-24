@@ -1,3 +1,4 @@
+// controllers\feeControllers\feeStructureController.js
 import prisma from "../../models/prisma.js";
 import { getActiveAcademicYear } from "../../utils/academicYearHelper.js";
 import { sendError, sendSuccess } from "../../utils/responseStructure.js";

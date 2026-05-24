@@ -1,3 +1,4 @@
+// routes\feeRoutes.js
 import express from "express";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 
