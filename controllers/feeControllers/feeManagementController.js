@@ -1,3 +1,4 @@
+// controllers\feeControllers\feeManagementController.js
 import prisma from "../../models/prisma.js";
 import { sendError, sendSuccess } from "../../utils/responseStructure.js";
 // Late Fee Models

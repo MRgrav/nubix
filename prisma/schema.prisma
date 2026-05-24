@@ -121,6 +121,9 @@ model School {
   address            Address?            @relation("SchoolAddress")
   documents          SchoolDocument[]
   homeworks          Homework[]
+  FeeCategory        FeeCategory[]
+  LateFeeConfig      LateFeeConfig[]
+  Parent             Parent[]
 }
 
 model SchoolDocument {
@@ -470,6 +473,7 @@ model User {
   UserFcmToken           UserFcmToken[]
   createdHomeworks       Homework[]             @relation("CreatedHomework")
   PasswordResetToken     PasswordResetToken[]
+  AlumniSubmission       AlumniSubmission[]
 }
 
 model PasswordResetToken {
@@ -933,8 +937,12 @@ model FeeCategory {
   isDefault   Boolean         @default(false) // Built-in like Tuition
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  schoolId    Int
+  school      School          @relation(fields: [schoolId], references: [id])
 
   feeStructures FeeStructure[]
+
+  @@unique([schoolId, name])
 }
 
 model FeeStructure {
@@ -1048,6 +1056,8 @@ model LateFeeConfig {
   graceDays      Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  schoolId       Int?
+  school         School?  @relation(fields: [schoolId], references: [id])
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
@@ -1137,6 +1147,9 @@ model Parent {
 
   user   User? @relation(fields: [userId], references: [id])
   userId Int?  @unique
+
+  schoolId Int?
+  school   School? @relation(fields: [schoolId], references: [id], onDelete: SetNull)
 
   students StudentParent[] // Many-to-many
 }
@@ -1738,4 +1751,60 @@ model Homework {
   @@index([lastDate])
   @@index([streamId])
   @@index([classId])
+}
+
+enum AlumniStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AlumniSubmissionType {
+  INITIAL
+  UPDATE
+}
+
+model AlumniSubmission {
+  id             Int      @id @default(autoincrement())
+  name           String
+  email          String
+  phone          String?
+  dateOfBirth    DateTime
+  graduationYear Int
+  course         String
+  currentStatus  String
+  organization   String?
+  designation    String?
+  location       String?
+
+  type            AlumniSubmissionType @default(INITIAL)
+  alumniProfileId Int?
+  alumniProfile   AlumniProfile?       @relation("AlumniUpdateRequests", fields: [alumniProfileId], references: [id], onDelete: SetNull)
+  status          AlumniStatus         @default(PENDING)
+  submittedAt     DateTime             @default(now())
+  verifiedAt      DateTime?
+  verifiedById    Int?
+  verifiedBy      User?                @relation(fields: [verifiedById], references: [id])
+
+  @@map("alumni_submissions")
+}
+
+model AlumniProfile {
+  id             Int      @id @default(autoincrement())
+  name           String
+  email          String   @unique
+  phone          String?
+  dateOfBirth    DateTime
+  graduationYear Int
+  course         String
+  currentStatus  String
+  organization   String?
+  designation    String?
+  location       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One-to-many relation: an AlumniProfile can have many update request submissions
+  updateRequests AlumniSubmission[] @relation("AlumniUpdateRequests")
 }

@@ -1,3 +1,4 @@
+// controllers\feeControllers\feeCategoryController.js
 import prisma from "../../models/prisma.js";
 import { sendSuccess, sendError } from "../../utils/responseStructure.js";
 
