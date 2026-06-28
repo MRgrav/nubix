@@ -12,8 +12,9 @@ import {
   approveAlumniUpdate,
   alumniLogin,
   submitAlumniUpdate,
-  getMyAlumniProfile,
   getMyUpdateRequests,
+  getAllAlumniWithRecords,
+  getMyFullRecords,
 } from "../controllers/alumniController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import jwt from "jsonwebtoken";
@@ -21,34 +22,57 @@ import { sendError } from "../utils/responseStructure.js";
 
 const router = express.Router();
 
+// In alumniRoutes.js or create a dedicated alumni auth middleware
 const authenticateAlumni = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return sendError(res, 401, "No token provided");
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return sendError(res, 401, "No token provided");
+  }
+
   const token = authHeader.split(" ")[1];
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "ALUMNI") return sendError(res, 403, "Access denied");
-    req.user = { id: decoded.id, role: decoded.role };
+
+    if (decoded.role !== "ALUMNI") {
+      return sendError(res, 403, "Access denied. Alumni login required");
+    }
+
+    // Standardize req.user
+    req.user = {
+      id: decoded.id || decoded.alumniId,
+      alumniId: decoded.alumniId || decoded.id,
+      role: decoded.role,
+      email: decoded.email,
+    };
+
     next();
   } catch (err) {
-    return sendError(res, 401, "Invalid token");
+    console.error("Alumni token error:", err.message);
+    return sendError(res, 401, "Invalid or expired token");
   }
 };
 
 // Public
+router.post("/submit", submitAlumni);
 router.post("/login", alumniLogin);
 
 // Alumni protected
-router.get("/me", authenticateAlumni, getMyAlumniProfile);
+
+router.get("/me/full", authenticateAlumni, getMyFullRecords);
 router.post("/me/update", authenticateAlumni, submitAlumniUpdate);
 router.get("/me/updates", authenticateAlumni, getMyUpdateRequests);
-
-// ─── Public Routes (No Authentication Required) ─────────────────────────
-router.post("/submit", submitAlumni);
-router.get("/", getAlumniDirectory);
-router.get("/:id", getAlumniProfile);
-
 // ─── Admin Routes ───────────────────────────────────────────────────────
+router.get(
+  "/admin/all",
+  authenticate,
+  authorize("ADMIN", "STAFF"),
+  getAllAlumniWithRecords,
+);
+
+router.get("/:id", authenticate, authorize("ADMIN"), getAlumniProfile);
+router.get("/", authenticate, authorize("ADMIN"), getAlumniDirectory);
 router.get(
   "/admin/submissions",
   authenticate,
