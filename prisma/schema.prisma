@@ -1777,6 +1777,9 @@ model AlumniSubmission {
   designation    String?
   location       String?
 
+  educationHistory  Json?
+  employmentHistory Json?
+
   type            AlumniSubmissionType @default(INITIAL)
   alumniProfileId Int?
   alumniProfile   AlumniProfile?       @relation("AlumniUpdateRequests", fields: [alumniProfileId], references: [id], onDelete: SetNull)
@@ -1790,11 +1793,12 @@ model AlumniSubmission {
 }
 
 model AlumniProfile {
-  id             Int      @id @default(autoincrement())
-  name           String
-  email          String   @unique
-  phone          String?
-  dateOfBirth    DateTime
+  id          Int      @id @default(autoincrement())
+  name        String
+  email       String   @unique
+  phone       String?
+  dateOfBirth DateTime
+
   graduationYear Int
   course         String
   currentStatus  String
@@ -1802,9 +1806,12 @@ model AlumniProfile {
   designation    String?
   location       String?
 
+  // ─── NEW: Full History ─────────────────────────────────────
+  educationHistory  Json?
+  employmentHistory Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // One-to-many relation: an AlumniProfile can have many update request submissions
   updateRequests AlumniSubmission[] @relation("AlumniUpdateRequests")
 }
