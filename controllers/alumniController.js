@@ -484,6 +484,86 @@ export const getAlumniDirectory = async (req, res) => {
   }
 };
 
+// ─── PUBLIC: Get Alumni Directory (No Authentication Required) ─────────────
+export const getAlumniDetailsPublic = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, graduationYear, course, search } = req.query;
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Number(limit);
+
+    const where = {};
+
+    // Filter by graduation year
+    if (graduationYear) {
+      where.graduationYear = Number(graduationYear);
+    }
+
+    // Filter by course
+    if (course) {
+      where.course = { contains: course, mode: "insensitive" };
+    }
+
+    // General search (name, organization, location)
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { organization: { contains: search, mode: "insensitive" } },
+        { location: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [total, alumni] = await prisma.$transaction([
+      prisma.alumniProfile.count({ where }),
+      prisma.alumniProfile.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { graduationYear: "desc" },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          dateOfBirth: true,
+          graduationYear: true,
+          course: true,
+          currentStatus: true,
+          organization: true,
+          designation: true,
+          location: true,
+          educationHistory: true,
+          employmentHistory: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    return sendSuccess(
+      res,
+      200,
+      alumni,
+      "Alumni directory fetched successfully",
+      {
+        total,
+        pages: Math.ceil(total / take),
+        currentPage: Number(page),
+        perPage: take,
+        hasNext: skip + take < total,
+        hasPrev: Number(page) > 1,
+      },
+    );
+  } catch (err) {
+    console.error("Get alumni directory error:", err);
+    return sendError(
+      res,
+      500,
+      "Failed to fetch alumni directory",
+      "INTERNAL_ERROR",
+    );
+  }
+};
+
 // ─── ADMIN: Verify submission → move to AlumniProfile ───────────
 export const verifySubmission = async (req, res) => {
   try {

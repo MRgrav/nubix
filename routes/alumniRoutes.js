@@ -15,6 +15,7 @@ import {
   getMyUpdateRequests,
   getAllAlumniWithRecords,
   getMyFullRecords,
+  getAlumniDetailsPublic,
 } from "../controllers/alumniController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 import jwt from "jsonwebtoken";
@@ -70,10 +71,10 @@ router.get(
   authorize("ADMIN", "STAFF"),
   getAllAlumniWithRecords,
 );
+router.get("/public", getAlumniDetailsPublic);
 
 router.get("/:id", authenticate, authorize("ADMIN"), getAlumniProfile);
-// router.get("/", authenticate, authorize("ADMIN"), getAlumniDirectory);
-router.get("/", getAlumniDirectory);
+router.get("/", authenticate, authorize("ADMIN"), getAlumniDirectory);
 router.get(
   "/admin/submissions",
   authenticate,
