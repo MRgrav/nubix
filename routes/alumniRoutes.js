@@ -72,7 +72,8 @@ router.get(
 );
 
 router.get("/:id", authenticate, authorize("ADMIN"), getAlumniProfile);
-router.get("/", authenticate, authorize("ADMIN"), getAlumniDirectory);
+// router.get("/", authenticate, authorize("ADMIN"), getAlumniDirectory);
+router.get("/", getAlumniDirectory);
 router.get(
   "/admin/submissions",
   authenticate,
